@@ -45,6 +45,25 @@ The first public version will include:
 
 ---
 
+## Project Structure
+
+```text
+moodlytics/
+├── src/
+│   └── moodlytics/
+│       └── __init__.py
+├── tests/
+├── docs/
+├── requirements.txt
+├── README.md
+├── LICENSE
+└── .gitignore
+
+---
+
+
+
+
 ## 📄 License
 
 This project is licensed under the Apache License 2.0.
