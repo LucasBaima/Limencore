@@ -1,5 +1,5 @@
 def initialize_app() -> None:
-    print("Initializing Moodlytics...")
+    print("Initializing Limencore...")
 
 #load configs
 #prepare the database
@@ -8,7 +8,7 @@ def initialize_app() -> None:
 
 
 def run_app() -> None:
-    print("Moodlytics is running")
+    print("Limencore is running")
 
 
 #Interface
@@ -23,7 +23,7 @@ def main() -> None:
         initialize_app()
         run_app()
     except Exception as error:
-        print(f"Failed to start Moodlytics: {error}")
+        print(f"Failed to start Limencore: {error}")
         
         
 
