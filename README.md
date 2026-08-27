@@ -1,69 +1,72 @@
-# Moodlytics
+# Limencore
 
-> Discover patterns. Understand yourself.
 
-Moodlytics is an open-source personal analytics platform designed to help users understand how their daily habits, routines, and emotional well-being relate over time.
 
-Rather than simply tracking moods, Moodlytics helps transform personal data into meaningful insights through visualization and analytics.
+> Um lugar para pensar — não para se cobrar.
 
----
+Limencore é uma ferramenta open-core de autoconhecimento para quem carrega a mente cheia: pensamentos misturados com problemas, preocupações que voltam, a sensação de não conseguir organizar o que se sente.
 
-## 🎯 Project Goal
+Em vez de pedir que você resuma o dia em notas e gráficos, o Limencore parte do pensamento em si. Você despeja o que está na cabeça, do jeito bagunçado que ele vem, e a ferramenta ajuda você a enxergar seus próprios padrões ao longo do tempo — o que volta, o que muda, o que pesa.
 
-Provide an intuitive way for users to record daily information and discover patterns between:
-
-- 😊 Mood
-- ⚡ Energy
-- 😴 Sleep
-- 📚 Productivity
-- 🏋 Physical activity
-- ☕ Caffeine consumption
-- 📝 Personal notes
-
-The project focuses on **self-awareness**, not medical diagnosis or treatment.
+O foco é **reflexão e autoconhecimento**. Não é diagnóstico, tratamento, nem aconselhamento — é um espelho, não um conselheiro.
 
 ---
 
-## 🚧 Project Status
+## Como isto é diferente de um app de humor
 
-Early development.
+A maioria dos apps de bem-estar registra *estado*: seu humor hoje, quantas horas dormiu, quanto café tomou. Útil, mas parte do princípio de que você já organizou o que sente antes de registrar.
 
-This repository is being built incrementally following software engineering best practices. Every feature is developed through small, documented commits.
-
----
-
-## 📌 Planned MVP
-
-The first public version will include:
-
-- Daily mood and habit registration
-- Local SQLite database
-- History of entries
-- Basic analytics dashboard
-- Data visualization
-- Simple trend analysis
+O Limencore parte do oposto. Ele aceita o caos primeiro — o pensamento cru — e ajuda a organização a surgir depois, no seu ritmo, sem transformar a reflexão num formulário. O objetivo não é arquivar como você esteve; é ajudar você a sair de onde travou.
 
 ---
 
-## Project Structure
+## Estado do projeto
+
+Em desenvolvimento inicial. O repositório é construído de forma incremental, em commits pequenos e documentados. O que existe hoje é a fundação: o modelo de dados de uma entrada.
+
+Este README descreve a direção do projeto, não um produto pronto. Recursos citados como planejados ainda não existem.
+
+---
+
+## MVP planejado
+
+A primeira versão pública deve incluir:
+
+- Registro de pensamentos em texto livre, com carimbo de tempo
+- Contexto opcional do dia (sono, energia, etc.) como pano de fundo
+- Banco de dados local (SQLite) — seus dados ficam no seu aparelho
+- Histórico de entradas
+- Leitura de padrões ao longo do tempo (recorrência, mudança)
+
+O contexto do dia é sempre secundário e opcional: o produto funciona sem preencher nada disso.
+
+---
+
+## Estrutura do projeto
 
 ```text
-moodlytics/
+limencore/
 ├── src/
-│   └── moodlytics/
-│       └── __init__.py
+│   └── limencore/
+│       ├── __init__.py
+│       ├── main.py
+│       └── entry.py        # modelo da entrada-pensamento
 ├── tests/
 ├── docs/
 ├── requirements.txt
 ├── README.md
 ├── LICENSE
 └── .gitignore
+```
 
 ---
 
+## Privacidade
 
+Os dados ficam no seu aparelho. O Limencore é pensado para funcionar localmente, sem enviar seus pensamentos para servidores externos.
 
+---
 
-## 📄 License
+## Licença
 
-This project is licensed under the Apache License 2.0.
+Este projeto é licenciado sob a Apache License 2.0. Veja o arquivo `LICENSE`.
