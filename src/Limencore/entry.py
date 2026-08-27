@@ -17,3 +17,4 @@ id: str = field(default_factory=lambda: str(uuid.uuid4()))
             raise ValueError("instante sem timezone: use datetime timezone-aware (UTC)")
 
     
+
