@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Limencore</title>
+</head>
+<body>
+
+  <!-- O topo da home: a data do dia. Por enquanto só isto. -->
+  <header>
+    <p id="data-de-hoje"></p>
+  </header>
+
+  <script>
+    // Escrever a data de hoje, por extens em português, dentro do <p>.
+    function mostrarDataDeHoje() {
+      const agora = new Date();
+      const texto = agora.toLocaleDateString("pt-BR", {
+        weekday: "long",
+        day: "numeric",
+        month: "long"
+      });
+      // toLocaleDateString devolve "terça-feira, 27 de agosto" (tudo miúsculo).
+      // Deixando a primeira letra maiúscula para ficar "Terça-feira...".
+      const capitalizado = texto.charAt(0).toUpperCase() + texto.slice(1);
+      document.getElementById("data-de-hoje").textContent = capitalizado;
+    }
+
+    // Mostra assim que a página abre.
+    mostrarDataDeHoje();
+
+    // --- Virada automática à meia-noite ---
+    // Calcula quantos milissegundos faltam até a próxima 00:00 e,
+    // quando chegar lá, reescreve a data. Depois repete a cada dia.
+    function agendarViradaDeDia() {
+      const agora = new Date();
+      const meiaNoite = new Date(agora);
+      meiaNoite.setHours(24, 0, 0, 0); // próxima 00:00
+      const msAteMeiaNoite = meiaNoite - agora;
+
+      setTimeout(function () {
+        mostrarDataDeHoje();     // atualiza a data virada
+        agendarViradaDeDia();    // reagenda para a meia-noite seguinte
+      }, msAteMeiaNoite);
+    }
+
+    agendarViradaDeDia();
+  </script>
+
+</body>
+</html>
