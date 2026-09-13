@@ -1,4 +1,5 @@
 import dataclasses
+import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -42,6 +43,22 @@ class TestInvalido:
     def test_instante_sem_timezone_falha(self):
         with pytest.raises(ValueError):
             ThoughtEntry(conteudo="x", instante=datetime(2026, 1, 1))
+
+
+class TestIdFormato:
+    def test_id_uuid4_valido_aceito(self):
+        id_valido = str(uuid.uuid4())
+        e = ThoughtEntry(conteudo="x", id=id_valido)
+        assert e.id == id_valido
+
+    def test_id_nao_uuid_falha(self):
+        with pytest.raises(ValueError):
+            ThoughtEntry(conteudo="x", id="abc")
+
+    def test_id_uuid_v1_falha(self):
+        id_v1 = str(uuid.uuid1())
+        with pytest.raises(ValueError):
+            ThoughtEntry(conteudo="x", id=id_v1)
 
 
 class TestFrozen:

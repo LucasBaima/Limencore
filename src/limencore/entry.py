@@ -14,3 +14,9 @@ class ThoughtEntry:  # ThoughtEntry = "entrada-pensamento"
             raise ValueError("conteudo vazio: uma entrada-pensamento exige um despejo")
         if self.instante.tzinfo is None:
             raise ValueError("instante sem timezone: use datetime timezone-aware (UTC)")
+        try:
+            u = uuid.UUID(self.id)
+        except (ValueError, TypeError):
+            raise ValueError(f"id invalido (nao e uuid): {self.id!r}")
+        if u.version != 4:
+            raise ValueError(f"id nao e uuid4: {self.id!r}")
