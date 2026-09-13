@@ -17,6 +17,18 @@ class Armazenamento:
             )
             """
         )
+        self._conexao.execute(
+            """
+            CREATE TABLE IF NOT EXISTS contexto_dia (
+                entry_date TEXT PRIMARY KEY,
+                sono_horas REAL,
+                sono_interrupcoes INTEGER,
+                cafeina_mg REAL,
+                energia TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         self._conexao.commit()
 
     def fechar(self):
