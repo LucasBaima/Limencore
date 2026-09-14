@@ -34,6 +34,14 @@ class Armazenamento:
             )
             """
         )
+        self._conexao.execute(
+            """
+            CREATE TABLE IF NOT EXISTS categorias (
+                chave_norm TEXT PRIMARY KEY,
+                rotulo     TEXT NOT NULL
+            )
+            """
+        )
         self._conexao.commit()
 
     def salvar(self, entry: ThoughtEntry):
@@ -43,8 +51,27 @@ class Armazenamento:
         )
         self._conexao.commit()
 
+    def _canonicalizar_energia(self, energia: dict[str, int]) -> dict[str, int]:
+        defaults = {area.value for area in AreaEnergia}
+        resultado = {}
+        for chave, valor in energia.items():
+            if chave in defaults:
+                canonica = chave
+            else:
+                norm = chave.strip().casefold()
+                self._conexao.execute(
+                    "INSERT OR IGNORE INTO categorias (chave_norm, rotulo) VALUES (?, ?)",
+                    (norm, chave.strip()),
+                )
+                canonica = self._conexao.execute(
+                    "SELECT rotulo FROM categorias WHERE chave_norm = ?", (norm,)
+                ).fetchone()[0]
+            resultado[canonica] = valor
+        return resultado
+
     def salvar_contexto(self, entry_date: str, contexto: ContextoAmbiente):
-        energia_json = json.dumps({a.name: v for a, v in contexto.energia.items()})
+        energia = self._canonicalizar_energia(contexto.energia)
+        energia_json = json.dumps(energia)
         self._conexao.execute(
             """
             INSERT INTO contexto_dia
@@ -92,9 +119,7 @@ class Armazenamento:
         if linha is None:
             return None
         sono_horas, sono_interrupcoes, cafeina_mg, energia = linha
-        energia_dict = {
-            AreaEnergia[nome]: v for nome, v in json.loads(energia or "{}").items()
-        }
+        energia_dict = json.loads(energia or "{}")
         return ContextoAmbiente(
             sono_horas=sono_horas,
             sono_interrupcoes=sono_interrupcoes,

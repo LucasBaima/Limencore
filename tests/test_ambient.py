@@ -1,6 +1,6 @@
 import pytest
 
-from limencore.ambient import ContextoAmbiente, AreaEnergia
+from limencore.ambient import ContextoAmbiente
 
 
 class TestValido:
@@ -12,17 +12,21 @@ class TestValido:
         assert c.energia == {}
 
     def test_energia_valida(self):
-        c = ContextoAmbiente(energia={AreaEnergia.TRABALHO: 60, AreaEnergia.CASA: 30})
-        assert c.energia[AreaEnergia.TRABALHO] == 60
+        c = ContextoAmbiente(energia={"Trabalho": 60, "Casa & Responsabilidades": 30})
+        assert c.energia["Trabalho"] == 60
 
     def test_ambiente_completo(self):
         c = ContextoAmbiente(
             sono_horas=7.5,
             sono_interrupcoes=2,
             cafeina_mg=200,
-            energia={AreaEnergia.TRABALHO: 50},
+            energia={"Trabalho": 50},
         )
         assert c.cafeina_mg == 200
+
+    def test_energia_custom_string_aceita(self):
+        c = ContextoAmbiente(energia={"academia": 20})
+        assert c.energia["academia"] == 20
 
 
 class TestOpcional:
@@ -40,18 +44,19 @@ class TestOpcional:
 
 
 class TestInvalido:
-    def test_energia_chave_nao_enum(self):
+    @pytest.mark.parametrize("chave", ["", "  "])
+    def test_energia_chave_vazia_ou_espaco_estoura(self, chave):
         with pytest.raises(ValueError):
-            ContextoAmbiente(energia={"Trabalho": 20})
+            ContextoAmbiente(energia={chave: 20})
 
     def test_energia_valor_fracionario(self):
         with pytest.raises(ValueError):
-            ContextoAmbiente(energia={AreaEnergia.TRABALHO: 22.5})
+            ContextoAmbiente(energia={"Trabalho": 22.5})
 
     def test_energia_valor_bool(self):
         # True vale 1 em Python; o guard barra bool de proposito.
         with pytest.raises(ValueError):
-            ContextoAmbiente(energia={AreaEnergia.TRABALHO: True})
+            ContextoAmbiente(energia={"Trabalho": True})
 
     def test_sono_interrupcoes_fracionario(self):
         with pytest.raises(ValueError):
@@ -61,21 +66,28 @@ class TestInvalido:
 class TestBorda:
     # --- energia: soma total ---
     def test_soma_exatamente_100_ok(self):
-        ContextoAmbiente(energia={AreaEnergia.TRABALHO: 70, AreaEnergia.CASA: 30})
+        ContextoAmbiente(energia={"Trabalho": 70, "Casa & Responsabilidades": 30})
 
     def test_soma_101_falha(self):
         with pytest.raises(ValueError):
-            ContextoAmbiente(energia={AreaEnergia.TRABALHO: 70, AreaEnergia.CASA: 31})
+            ContextoAmbiente(energia={"Trabalho": 70, "Casa & Responsabilidades": 31})
+
+    def test_soma_100_mista_default_e_custom_ok(self):
+        ContextoAmbiente(energia={"Trabalho": 60, "academia": 40})
+
+    def test_soma_101_mista_default_e_custom_falha(self):
+        with pytest.raises(ValueError):
+            ContextoAmbiente(energia={"Trabalho": 61, "academia": 40})
 
     # --- energia: valor individual ---
     @pytest.mark.parametrize("valor", [0, 100])
     def test_energia_valor_no_limite_ok(self, valor):
-        ContextoAmbiente(energia={AreaEnergia.TRABALHO: valor})
+        ContextoAmbiente(energia={"Trabalho": valor})
 
     @pytest.mark.parametrize("valor", [-1, 101])
     def test_energia_valor_fora_falha(self, valor):
         with pytest.raises(ValueError):
-            ContextoAmbiente(energia={AreaEnergia.TRABALHO: valor})
+            ContextoAmbiente(energia={"Trabalho": valor})
 
     # --- sono_horas: 0 a 24 ---
     @pytest.mark.parametrize("h", [0, 24])
@@ -105,3 +117,25 @@ class TestBorda:
     def test_cafeina_fora_falha(self, mg):
         with pytest.raises(ValueError):
             ContextoAmbiente(cafeina_mg=mg)
+
+
+class TestSnapDefault:
+    @pytest.mark.parametrize("chave", ["trabalho", "  TRABALHO ", "Trabalho", "TRABALHO"])
+    def test_snap_default_ignora_caixa_e_espaco(self, chave):
+        c = ContextoAmbiente(energia={chave: 40})
+        assert c.energia == {"Trabalho": 40}
+
+    def test_custom_preserva_grafia(self):
+        c = ContextoAmbiente(energia={"  Academia ": 20})
+        assert c.energia == {"Academia": 20}
+
+    def test_soma_e_calculada_pos_dedup(self):
+        # "trabalho" e "TRABALHO" colapsam na mesma chave canonica; a soma
+        # deve considerar apenas o valor final (60), nao 60+60.
+        c = ContextoAmbiente(energia={"trabalho": 60, "TRABALHO": 60})
+        assert c.energia == {"Trabalho": 60}
+
+    @pytest.mark.parametrize("chave", ["", "  "])
+    def test_chave_vazia_ou_espaco_estoura(self, chave):
+        with pytest.raises(ValueError):
+            ContextoAmbiente(energia={chave: 20})

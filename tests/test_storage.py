@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from limencore.ambient import AreaEnergia, ContextoAmbiente
+from limencore.ambient import ContextoAmbiente
 from limencore.entry import ThoughtEntry
 from limencore.storage import Armazenamento
 
@@ -112,29 +112,40 @@ class TestSalvarContexto:
             sono_horas=7.5,
             sono_interrupcoes=1,
             cafeina_mg=100,
-            energia={AreaEnergia.TRABALHO: 40, AreaEnergia.CASA: 20},
+            energia={"Trabalho": 40, "Casa & Responsabilidades": 20},
         )
         armazenamento.salvar_contexto("2026-01-01", contexto)
         lido = armazenamento.buscar_contexto("2026-01-01")
         assert lido == contexto
         armazenamento.fechar()
 
+    def test_round_trip_mistura_default_e_custom(self):
+        armazenamento = Armazenamento(":memory:")
+        contexto = ContextoAmbiente(energia={"Trabalho": 60, "academia": 40})
+        armazenamento.salvar_contexto("2026-01-01", contexto)
+        lido = armazenamento.buscar_contexto("2026-01-01")
+        assert lido == contexto
+        assert sum(lido.energia.values()) == 100
+        armazenamento.fechar()
+
     def test_overwrite_mesmo_entry_date(self):
         armazenamento = Armazenamento(":memory:")
         armazenamento.salvar_contexto(
             "2026-01-01",
-            ContextoAmbiente(sono_horas=5, energia={AreaEnergia.TRABALHO: 10}),
+            ContextoAmbiente(sono_horas=5, energia={"Trabalho": 10}),
         )
         armazenamento.salvar_contexto(
             "2026-01-01",
-            ContextoAmbiente(sono_horas=8, energia={AreaEnergia.CASA: 30}),
+            ContextoAmbiente(sono_horas=8, energia={"Casa & Responsabilidades": 30}),
         )
         cursor = armazenamento._conexao.execute(
             "SELECT COUNT(*) FROM contexto_dia"
         )
         assert cursor.fetchone()[0] == 1
         lido = armazenamento.buscar_contexto("2026-01-01")
-        assert lido == ContextoAmbiente(sono_horas=8, energia={AreaEnergia.CASA: 30})
+        assert lido == ContextoAmbiente(
+            sono_horas=8, energia={"Casa & Responsabilidades": 30}
+        )
         armazenamento.fechar()
 
     def test_created_at_preservado_no_overwrite(self):
@@ -159,6 +170,54 @@ class TestSalvarContexto:
     def test_buscar_contexto_inexistente_retorna_none(self):
         armazenamento = Armazenamento(":memory:")
         assert armazenamento.buscar_contexto("2099-12-31") is None
+        armazenamento.fechar()
+
+
+class TestCanonicalizacaoCrossDay:
+    def test_custom_canonicaliza_pela_primeira_grafia(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento.salvar_contexto(
+            "2026-01-01", ContextoAmbiente(energia={"academia": 30})
+        )
+        armazenamento.salvar_contexto(
+            "2026-01-02", ContextoAmbiente(energia={"Academia": 40})
+        )
+
+        lido = armazenamento.buscar_contexto("2026-01-02")
+
+        assert "academia" in lido.energia
+        assert lido.energia["academia"] == 40
+        armazenamento.fechar()
+
+    def test_categorias_tem_uma_linha_para_o_custom(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento.salvar_contexto(
+            "2026-01-01", ContextoAmbiente(energia={"academia": 30})
+        )
+        armazenamento.salvar_contexto(
+            "2026-01-02", ContextoAmbiente(energia={"Academia": 40})
+        )
+
+        cursor = armazenamento._conexao.execute("SELECT COUNT(*) FROM categorias")
+        assert cursor.fetchone()[0] == 1
+        armazenamento.fechar()
+
+    def test_default_nao_entra_em_categorias(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento.salvar_contexto(
+            "2026-01-01", ContextoAmbiente(energia={"trabalho": 50})
+        )
+
+        cursor = armazenamento._conexao.execute("SELECT COUNT(*) FROM categorias")
+        assert cursor.fetchone()[0] == 0
+        armazenamento.fechar()
+
+    def test_round_trip_default_e_custom_continua_igual(self):
+        armazenamento = Armazenamento(":memory:")
+        contexto = ContextoAmbiente(energia={"Trabalho": 60, "academia": 40})
+        armazenamento.salvar_contexto("2026-01-01", contexto)
+        lido = armazenamento.buscar_contexto("2026-01-01")
+        assert lido == contexto
         armazenamento.fechar()
 
 

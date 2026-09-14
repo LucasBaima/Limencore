@@ -13,13 +13,16 @@ class AreaEnergia(Enum):
     OUTRO = "Outro"
 
 
+DEFAULTS_ENERGIA = {area.value.strip().casefold(): area.value for area in AreaEnergia}
+
+
 
 @dataclass
 class ContextoAmbiente:
     sono_horas: float | None = None
     sono_interrupcoes: int | None = None
     cafeina_mg: float | None = None
-    energia: dict[AreaEnergia, int] = field(default_factory=dict)
+    energia: dict[str, int] = field(default_factory=dict)
 
 
     def __post_init__(self):  #Validações
@@ -42,17 +45,23 @@ class ContextoAmbiente:
             if not 0 <= self.cafeina_mg <= 500:  # >400mg possivel mas nao recomendado; 500 = teto de sanidade
                 raise ValueError(f"cafeina_mg={self.cafeina_mg}: fora do intervalo 0-500")
 
-        total = 0
-        for area, valor in self.energia.items():
-            if not isinstance(area, AreaEnergia):
-                raise ValueError(f"chave de energia invalida: {area!r} nao e AreaEnergia")
+        energia_normalizada = {}
+        for chave, valor in self.energia.items():
+            if not isinstance(chave, str):
+                raise ValueError(f"chave de energia invalida: {chave!r} nao e string nao-vazia")
+            base = chave.strip()
+            if not base:
+                raise ValueError(f"chave de energia invalida: {chave!r} nao e string nao-vazia")
             if isinstance(valor, bool) or not isinstance(valor, int):
-                raise ValueError(f"energia de {area.value}: use inteiro (ex: 25), nao {valor!r}")
+                raise ValueError(f"energia de {base}: use inteiro (ex: 25), nao {valor!r}")
             if not 0 <= valor <= 100:
-                raise ValueError(f"energia de {area.value}={valor}: fora do intervalo 0-100")
-            total += valor
+                raise ValueError(f"energia de {base}={valor}: fora do intervalo 0-100")
+            chave_final = DEFAULTS_ENERGIA.get(base.casefold(), base)
+            energia_normalizada[chave_final] = valor
+        total = sum(energia_normalizada.values())
         if total > 100:
             raise ValueError(f"soma da energia={total}: excede 100%")
+        self.energia = energia_normalizada
 
 
 
