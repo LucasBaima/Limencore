@@ -248,6 +248,9 @@ class TestListar:
         armazenamento.fechar()
 
 
+
+
+
 class TestBuscarPorData:
     TOKYO = ZoneInfo("Asia/Tokyo")  # UTC+9, sem horario de verao: fuso estavel p/ teste
 
@@ -266,6 +269,8 @@ class TestBuscarPorData:
         assert [e.conteudo for e in dia_local_correto] == ["virada"]
         assert dia_utc_ingenuo == []
         armazenamento.fechar()
+
+
 
     def test_janela_completa_do_dia_local_inclusiva_exclusiva(self):
         armazenamento = Armazenamento(":memory:")
@@ -290,10 +295,14 @@ class TestBuscarPorData:
         assert [e.conteudo for e in resultado] == ["inicio", "fim"]
         armazenamento.fechar()
 
+
+
     def test_dia_sem_thoughts_retorna_lista_vazia(self):
         armazenamento = Armazenamento(":memory:")
         assert armazenamento.buscar_por_data(date(2026, 1, 2), self.TOKYO) == []
         armazenamento.fechar()
+
+
 
 
 class TestBuscarDia:
@@ -346,6 +355,9 @@ class TestBuscarDia:
         armazenamento.fechar()
 
 
+
+
+
 class TestListarContextos:
     def test_intervalo_inclusivo_ordenado(self):
         armazenamento = Armazenamento(":memory:")
@@ -375,9 +387,62 @@ class TestListarContextos:
         armazenamento.fechar()
 
 
+
+
 class TestFechar:
     def test_fechar_encerra_conexao(self):
         armazenamento = Armazenamento(":memory:")
         armazenamento.fechar()
         with pytest.raises(sqlite3.ProgrammingError):
             armazenamento._conexao.execute("SELECT 1")
+
+
+
+
+class TestOffsetHistorico:
+    # Complementa a TestBuscarPorData (Tóquio): Tóquio não tem horário
+    # de verão, então aquela classe prova a lógica da janela, mas NÃO a escolha de
+    # ZoneInfo sobre offset fixo — trocar ZoneInfo("Asia/Tokyo") por um offset fixo
+    # de +9 passaria igual. Esta classe usa um fuso COM DST pra travar essa escolha:
+    # se alguém trocar ZoneInfo por timezone(timedelta(...)), ela quebra.
+    NY = ZoneInfo("America/New_York")  # EDT (UTC-4) no verão, EST (UTC-5) no inverno
+
+    def test_dst_respeitado_offset_fixo_falharia(self):
+        armazenamento = Armazenamento(":memory:")
+        # 01/07 é verão → EDT (UTC-4). 00:30 local == 04:30 UTC.
+        # Com offset fixo EST (-5), 04:30 UTC viraria 23:30 de 30/06 e cairia no dia
+        # anterior — o thought sumiria da busca por 01/07. ZoneInfo evita isso.
+        t = ThoughtEntry(
+            conteudo="verao",
+            instante=datetime(2026, 7, 1, 4, 30, tzinfo=timezone.utc),
+        )
+        armazenamento.salvar(t)
+        resultado = armazenamento.buscar_por_data(date(2026, 7, 1), self.NY)
+        assert [e.conteudo for e in resultado] == ["verao"]
+        armazenamento.fechar()
+
+
+
+
+class TestListarContextosEnergia: 
+    # Estende a TestListarContextos, que só verificava sono_horas.que só verificava sono_horas.
+    # Aqui provamos que a ENERGIA (o JSON) sobrevive o round-trip e que o ramo
+    # `energia or "{}"` (contexto salvo sem energia) não quebra o parse.
+
+    def test_energia_sobrevive_round_trip(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento.salvar_contexto("2026-01-01", ContextoAmbiente(energia={"Trabalho": 40}))
+        [(_, via_lista)] = armazenamento.listar_contextos("2026-01-01", "2026-01-01")
+        # cruza os dois caminhos de leitura: listar_contextos tem que remontar o
+        # mesmo ContextoAmbiente que buscar_contexto devolve.
+        assert via_lista == armazenamento.buscar_contexto("2026-01-01")
+        assert via_lista.energia == {"Trabalho": 40}
+        armazenamento.fechar()
+        
+
+    def test_contexto_sem_energia_volta_dict_vazio(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento.salvar_contexto("2026-01-01", ContextoAmbiente(sono_horas=7))
+        [(_, ctx)] = armazenamento.listar_contextos("2026-01-01", "2026-01-01")
+        assert ctx.energia == {}
+        armazenamento.fechar()
