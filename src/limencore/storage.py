@@ -136,6 +136,16 @@ class Armazenamento:
         )
 
     def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[ThoughtEntry]:
+        #def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[ThoughtEntry]:
+        # Lembrar -> thoughts guardam 'instante' em UTC; "o dia X local" é uma JANELA em UTC,
+        # não um match de data. Montei meia-noite local -> +1 dia, convertemos as
+        # duas pontas pra UTC e filtramos [inicio, fim). Assim um despejo das 23h
+        # não vaza pro dia seguinte. 
+        
+        #O 'tz' tem que ser o mesmo usado ao salvar o
+        # entry_date, senão thought e contexto discordam sobre que dia é.
+
+
         inicio_local = datetime(
             data_local.year, data_local.month, data_local.day, tzinfo=tz
         )
