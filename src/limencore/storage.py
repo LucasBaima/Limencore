@@ -1,9 +1,17 @@
 import json
 import sqlite3
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from limencore.ambient import AreaEnergia, ContextoAmbiente
 from limencore.entry import ThoughtEntry
+
+
+@dataclass(frozen=True)
+class Dia:
+    thoughts: list[ThoughtEntry]
+    contexto: ContextoAmbiente | None
 
 
 class Armazenamento:
@@ -126,6 +134,63 @@ class Armazenamento:
             cafeina_mg=cafeina_mg,
             energia=energia_dict,
         )
+
+    def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[ThoughtEntry]:
+        inicio_local = datetime(
+            data_local.year, data_local.month, data_local.day, tzinfo=tz
+        )
+        fim_local = inicio_local + timedelta(days=1)
+        inicio_utc = inicio_local.astimezone(timezone.utc)
+        fim_utc = fim_local.astimezone(timezone.utc)
+        cursor = self._conexao.execute(
+            """
+            SELECT id, conteudo, instante FROM thoughts
+              WHERE instante >= ? AND instante < ?
+              ORDER BY instante
+            """,
+            (inicio_utc.isoformat(), fim_utc.isoformat()),
+        )
+        return [
+            ThoughtEntry(
+                id=id_,
+                conteudo=conteudo,
+                instante=datetime.fromisoformat(instante),
+            )
+            for id_, conteudo, instante in cursor.fetchall()
+        ]
+
+    def buscar_dia(self, data_local: date, tz: ZoneInfo) -> Dia:
+        thoughts = self.buscar_por_data(data_local, tz)
+        contexto = self.buscar_contexto(data_local.isoformat())
+        return Dia(thoughts=thoughts, contexto=contexto)
+
+    def listar_contextos(
+        self, inicio: str, fim: str
+    ) -> list[tuple[str, ContextoAmbiente]]:
+        cursor = self._conexao.execute(
+            """
+            SELECT entry_date, sono_horas, sono_interrupcoes, cafeina_mg, energia
+              FROM contexto_dia
+              WHERE entry_date >= ? AND entry_date <= ?
+              ORDER BY entry_date
+            """,
+            (inicio, fim),
+        )
+        resultado = []
+        for entry_date, sono_horas, sono_interrupcoes, cafeina_mg, energia in cursor.fetchall():
+            energia_dict = json.loads(energia or "{}")
+            resultado.append(
+                (
+                    entry_date,
+                    ContextoAmbiente(
+                        sono_horas=sono_horas,
+                        sono_interrupcoes=sono_interrupcoes,
+                        cafeina_mg=cafeina_mg,
+                        energia=energia_dict,
+                    ),
+                )
+            )
+        return resultado
 
     def fechar(self):
         self._conexao.close()

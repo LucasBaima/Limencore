@@ -1,11 +1,12 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from limencore.ambient import ContextoAmbiente
 from limencore.entry import ThoughtEntry
-from limencore.storage import Armazenamento
+from limencore.storage import Armazenamento, Dia
 
 
 class TestCriacao:
@@ -244,6 +245,133 @@ class TestListar:
         for entry in resultado:
             assert isinstance(entry.instante, datetime)
             assert entry.instante.tzinfo is not None
+        armazenamento.fechar()
+
+
+class TestBuscarPorData:
+    TOKYO = ZoneInfo("Asia/Tokyo")  # UTC+9, sem horario de verao: fuso estavel p/ teste
+
+    def test_thought_perto_da_virada_cai_no_dia_local_certo(self):
+        armazenamento = Armazenamento(":memory:")
+        # 2026-01-02 00:30 em Tokyo == 2026-01-01 15:30 UTC (dia UTC diferente do local)
+        virada = ThoughtEntry(
+            conteudo="virada",
+            instante=datetime(2026, 1, 1, 15, 30, tzinfo=timezone.utc),
+        )
+        armazenamento.salvar(virada)
+
+        dia_local_correto = armazenamento.buscar_por_data(date(2026, 1, 2), self.TOKYO)
+        dia_utc_ingenuo = armazenamento.buscar_por_data(date(2026, 1, 1), self.TOKYO)
+
+        assert [e.conteudo for e in dia_local_correto] == ["virada"]
+        assert dia_utc_ingenuo == []
+        armazenamento.fechar()
+
+    def test_janela_completa_do_dia_local_inclusiva_exclusiva(self):
+        armazenamento = Armazenamento(":memory:")
+        inicio_exato = ThoughtEntry(
+            conteudo="inicio",
+            instante=datetime(2026, 1, 1, 15, 0, 0, tzinfo=timezone.utc),  # 00:00 Tokyo 01/02
+        )
+        fim_do_dia = ThoughtEntry(
+            conteudo="fim",
+            instante=datetime(2026, 1, 2, 14, 59, 59, tzinfo=timezone.utc),  # 23:59:59 Tokyo 01/02
+        )
+        proximo_dia = ThoughtEntry(
+            conteudo="proximo",
+            instante=datetime(2026, 1, 2, 15, 0, 0, tzinfo=timezone.utc),  # 00:00 Tokyo 01/03
+        )
+        armazenamento.salvar(proximo_dia)
+        armazenamento.salvar(inicio_exato)
+        armazenamento.salvar(fim_do_dia)
+
+        resultado = armazenamento.buscar_por_data(date(2026, 1, 2), self.TOKYO)
+
+        assert [e.conteudo for e in resultado] == ["inicio", "fim"]
+        armazenamento.fechar()
+
+    def test_dia_sem_thoughts_retorna_lista_vazia(self):
+        armazenamento = Armazenamento(":memory:")
+        assert armazenamento.buscar_por_data(date(2026, 1, 2), self.TOKYO) == []
+        armazenamento.fechar()
+
+
+class TestBuscarDia:
+    TOKYO = ZoneInfo("Asia/Tokyo")
+
+    def test_junta_thoughts_e_contexto_do_mesmo_dia(self):
+        armazenamento = Armazenamento(":memory:")
+        entry = ThoughtEntry(
+            conteudo="pensamento",
+            instante=datetime(2026, 1, 1, 15, 0, tzinfo=timezone.utc),  # 00:00 Tokyo 01/02
+        )
+        armazenamento.salvar(entry)
+        contexto = ContextoAmbiente(sono_horas=7, energia={"Trabalho": 50})
+        armazenamento.salvar_contexto("2026-01-02", contexto)
+
+        dia = armazenamento.buscar_dia(date(2026, 1, 2), self.TOKYO)
+
+        assert dia == Dia(thoughts=[entry], contexto=contexto)
+        armazenamento.fechar()
+
+    def test_dia_sem_contexto_e_none(self):
+        armazenamento = Armazenamento(":memory:")
+        entry = ThoughtEntry(
+            conteudo="pensamento",
+            instante=datetime(2026, 1, 1, 15, 0, tzinfo=timezone.utc),
+        )
+        armazenamento.salvar(entry)
+
+        dia = armazenamento.buscar_dia(date(2026, 1, 2), self.TOKYO)
+
+        assert dia.contexto is None
+        assert dia.thoughts == [entry]
+        armazenamento.fechar()
+
+    def test_dia_sem_thoughts_e_lista_vazia(self):
+        armazenamento = Armazenamento(":memory:")
+        contexto = ContextoAmbiente(sono_horas=7)
+        armazenamento.salvar_contexto("2026-01-02", contexto)
+
+        dia = armazenamento.buscar_dia(date(2026, 1, 2), self.TOKYO)
+
+        assert dia.thoughts == []
+        assert dia.contexto == contexto
+        armazenamento.fechar()
+
+    def test_dia_totalmente_vazio(self):
+        armazenamento = Armazenamento(":memory:")
+        dia = armazenamento.buscar_dia(date(2026, 1, 2), self.TOKYO)
+        assert dia == Dia(thoughts=[], contexto=None)
+        armazenamento.fechar()
+
+
+class TestListarContextos:
+    def test_intervalo_inclusivo_ordenado(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento.salvar_contexto("2026-01-03", ContextoAmbiente(sono_horas=6))
+        armazenamento.salvar_contexto("2026-01-01", ContextoAmbiente(sono_horas=7))
+        armazenamento.salvar_contexto("2026-01-02", ContextoAmbiente(sono_horas=8))
+
+        resultado = armazenamento.listar_contextos("2026-01-01", "2026-01-03")
+
+        assert [d for d, _ in resultado] == ["2026-01-01", "2026-01-02", "2026-01-03"]
+        armazenamento.fechar()
+
+    def test_fora_do_intervalo_excluido(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento.salvar_contexto("2025-12-31", ContextoAmbiente(sono_horas=6))
+        armazenamento.salvar_contexto("2026-01-01", ContextoAmbiente(sono_horas=7))
+        armazenamento.salvar_contexto("2026-02-01", ContextoAmbiente(sono_horas=8))
+
+        resultado = armazenamento.listar_contextos("2026-01-01", "2026-01-31")
+
+        assert [d for d, _ in resultado] == ["2026-01-01"]
+        armazenamento.fechar()
+
+    def test_intervalo_sem_registros_retorna_lista_vazia(self):
+        armazenamento = Armazenamento(":memory:")
+        assert armazenamento.listar_contextos("2026-01-01", "2026-01-31") == []
         armazenamento.fechar()
 
 
