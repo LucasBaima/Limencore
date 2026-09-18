@@ -4,11 +4,20 @@
 # Cache do Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # Variáveis de ambiente
 .env
+.env.*
+!.env.example
 
-
+# Espelho da fronteira <- memória persistente claudian
 CLAUDE.md
 
-limencore.db
+# Dados pessoais locais (SQLite + satélites) — NUNCA versionar
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
