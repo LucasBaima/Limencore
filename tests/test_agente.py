@@ -2,6 +2,7 @@ import dataclasses
 
 import pytest
 
+from limencore.agente.movimento import Forma, Movimento
 from limencore.agente.pergunta import CamadaContencao, Pergunta
 from limencore.agente.seletor import SeletorDePergunta, SeletorGenerico
 from limencore.entry import ThoughtEntry
@@ -46,3 +47,39 @@ class TestSeletorGenerico:
         e1 = ThoughtEntry(conteudo="a")
         e2 = ThoughtEntry(conteudo="pensamento completamente diferente")
         assert seletor.selecionar(e1) == seletor.selecionar(e2)
+
+
+class TestForma:
+    def test_tres_formas(self):
+        assert {f.name for f in Forma} == {"DIVIDIR", "UM_SO", "LIGAR"}
+
+
+class TestMovimento:
+    def test_criacao(self):
+        m = Movimento(Forma.UM_SO, ("id-a",))
+        assert m.forma is Forma.UM_SO
+        assert m.alvos == ("id-a",)
+
+    def test_frozen(self):
+        m = Movimento(Forma.UM_SO, ("id-a",))
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            m.forma = Forma.LIGAR
+
+    def test_igualdade_por_valor(self):
+        assert Movimento(Forma.UM_SO, ("id-a",)) == Movimento(Forma.UM_SO, ("id-a",))
+
+    def test_multiplos_alvos(self):
+        m = Movimento(Forma.LIGAR, ("id-a", "id-b"))
+        assert m.alvos == ("id-a", "id-b")
+
+    def test_alvos_vazio_falha(self):
+        with pytest.raises(ValueError):
+            Movimento(Forma.DIVIDIR, ())
+
+    def test_alvo_em_branco_falha(self):
+        with pytest.raises(ValueError):
+            Movimento(Forma.UM_SO, ("  ",))
+
+    def test_forma_invalida_falha(self):
+        with pytest.raises(ValueError):
+            Movimento("dividir", ("id-a",))
