@@ -35,18 +35,23 @@ class TestSeletorGenerico:
         seletor: SeletorDePergunta = SeletorGenerico()
         assert isinstance(seletor, SeletorDePergunta)
 
-    def test_devolve_uma_pergunta(self):
+    def test_devolve_um_movimento(self):
         entry = ThoughtEntry(conteudo="hoje foi um dia dificil")
-        pergunta = SeletorGenerico().selecionar(entry)
-        assert isinstance(pergunta, Pergunta)
-        assert pergunta.texto
-        assert pergunta.camada is None
+        mov = SeletorGenerico().selecionar(entry)
+        assert isinstance(mov, Movimento)
+        assert mov.forma is Forma.UM_SO
+        assert mov.alvos == (entry.id,)
 
     def test_zero_inteligencia_de_escolha(self):
         seletor = SeletorGenerico()
         e1 = ThoughtEntry(conteudo="a")
         e2 = ThoughtEntry(conteudo="pensamento completamente diferente")
-        assert seletor.selecionar(e1) == seletor.selecionar(e2)
+        m1 = seletor.selecionar(e1)
+        m2 = seletor.selecionar(e2)
+        # a forma e sempre UM_SO (prova a ausencia de escolha);
+        # os alvos diferem porque apontam para ids diferentes
+        assert m1.forma is m2.forma is Forma.UM_SO
+        assert m1.alvos != m2.alvos
 
 
 class TestForma:
