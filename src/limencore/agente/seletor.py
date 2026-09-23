@@ -1,6 +1,6 @@
 from typing import Protocol, runtime_checkable
 
-from limencore.entry import ThoughtEntry
+from limencore.despejo import Despejo
 
 from .movimento import Forma, Movimento
 
@@ -13,7 +13,7 @@ class SeletorDeMovimento(Protocol):
     privadas plugam aqui, sem alterar esta interface.
     """
 
-    def selecionar(self, entry: ThoughtEntry) -> Movimento: ...
+    def selecionar(self, entry: Despejo) -> Movimento: ...
 
 
 # Alias temporario: o repo privado ainda importa este nome.
@@ -24,5 +24,5 @@ SeletorDePergunta = SeletorDeMovimento
 class SeletorGenerico:
     """Implementação pública default. Zero inteligência de escolha."""
 
-    def selecionar(self, entry: ThoughtEntry) -> Movimento:
+    def selecionar(self, entry: Despejo) -> Movimento:
         return Movimento(forma=Forma.UM_SO, alvos=(entry.id,))

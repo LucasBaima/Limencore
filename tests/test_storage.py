@@ -1,11 +1,12 @@
 import sqlite3
+import uuid
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from limencore.ambient import ContextoAmbiente
-from limencore.entry import ThoughtEntry
+from limencore.despejo import Despejo
 from limencore.storage import Armazenamento, Dia
 
 
@@ -13,14 +14,14 @@ class TestCriacao:
     def test_tabela_thoughts_existe(self):
         armazenamento = Armazenamento(":memory:")
         cursor = armazenamento._conexao.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='thoughts'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='despejos'"
         )
         assert cursor.fetchone() is not None
         armazenamento.fechar()
 
     def test_colunas_esperadas(self):
         armazenamento = Armazenamento(":memory:")
-        cursor = armazenamento._conexao.execute("PRAGMA table_info(thoughts)")
+        cursor = armazenamento._conexao.execute("PRAGMA table_info(despejos)")
         colunas = {linha[1] for linha in cursor.fetchall()}
         assert colunas == {"id", "conteudo", "instante"}
         armazenamento.fechar()
@@ -61,7 +62,7 @@ class TestIdempotencia:
         armazenamento._inicializar()
         armazenamento._inicializar()
         cursor = armazenamento._conexao.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='thoughts'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='despejos'"
         )
         assert cursor.fetchone() is not None
         armazenamento.fechar()
@@ -80,10 +81,10 @@ class TestIdempotencia:
 class TestSalvar:
     def test_salvar_persiste_id_conteudo_instante(self):
         armazenamento = Armazenamento(":memory:")
-        entry = ThoughtEntry(conteudo="primeiro pensamento")
+        entry = Despejo(conteudo="primeiro pensamento")
         armazenamento.salvar(entry)
         cursor = armazenamento._conexao.execute(
-            "SELECT id, conteudo, instante FROM thoughts WHERE id = ?", (entry.id,)
+            "SELECT id, conteudo, instante FROM despejos WHERE id = ?", (entry.id,)
         )
         linha = cursor.fetchone()
         assert linha == (entry.id, entry.conteudo, entry.instante.isoformat())
@@ -91,15 +92,15 @@ class TestSalvar:
 
     def test_salvar_duas_entries_diferentes(self):
         armazenamento = Armazenamento(":memory:")
-        armazenamento.salvar(ThoughtEntry(conteudo="pensamento um"))
-        armazenamento.salvar(ThoughtEntry(conteudo="pensamento dois"))
-        cursor = armazenamento._conexao.execute("SELECT COUNT(*) FROM thoughts")
+        armazenamento.salvar(Despejo(conteudo="pensamento um"))
+        armazenamento.salvar(Despejo(conteudo="pensamento dois"))
+        cursor = armazenamento._conexao.execute("SELECT COUNT(*) FROM despejos")
         assert cursor.fetchone()[0] == 2
         armazenamento.fechar()
 
     def test_salvar_mesma_entry_duas_vezes_estoura_integridade(self):
         armazenamento = Armazenamento(":memory:")
-        entry = ThoughtEntry(conteudo="pensamento repetido")
+        entry = Despejo(conteudo="pensamento repetido")
         armazenamento.salvar(entry)
         with pytest.raises(sqlite3.IntegrityError):
             armazenamento.salvar(entry)
@@ -225,13 +226,13 @@ class TestCanonicalizacaoCrossDay:
 class TestListar:
     def test_listar_retorna_thoughts_ordenados_por_instante(self):
         armazenamento = Armazenamento(":memory:")
-        e1 = ThoughtEntry(
+        e1 = Despejo(
             conteudo="primeiro", instante=datetime(2026, 1, 1, tzinfo=timezone.utc)
         )
-        e2 = ThoughtEntry(
+        e2 = Despejo(
             conteudo="segundo", instante=datetime(2026, 1, 2, tzinfo=timezone.utc)
         )
-        e3 = ThoughtEntry(
+        e3 = Despejo(
             conteudo="terceiro", instante=datetime(2026, 1, 3, tzinfo=timezone.utc)
         )
         armazenamento.salvar(e3)
@@ -257,7 +258,7 @@ class TestBuscarPorData:
     def test_thought_perto_da_virada_cai_no_dia_local_certo(self):
         armazenamento = Armazenamento(":memory:")
         # 2026-01-02 00:30 em Tokyo == 2026-01-01 15:30 UTC (dia UTC diferente do local)
-        virada = ThoughtEntry(
+        virada = Despejo(
             conteudo="virada",
             instante=datetime(2026, 1, 1, 15, 30, tzinfo=timezone.utc),
         )
@@ -274,15 +275,15 @@ class TestBuscarPorData:
 
     def test_janela_completa_do_dia_local_inclusiva_exclusiva(self):
         armazenamento = Armazenamento(":memory:")
-        inicio_exato = ThoughtEntry(
+        inicio_exato = Despejo(
             conteudo="inicio",
             instante=datetime(2026, 1, 1, 15, 0, 0, tzinfo=timezone.utc),  # 00:00 Tokyo 01/02
         )
-        fim_do_dia = ThoughtEntry(
+        fim_do_dia = Despejo(
             conteudo="fim",
             instante=datetime(2026, 1, 2, 14, 59, 59, tzinfo=timezone.utc),  # 23:59:59 Tokyo 01/02
         )
-        proximo_dia = ThoughtEntry(
+        proximo_dia = Despejo(
             conteudo="proximo",
             instante=datetime(2026, 1, 2, 15, 0, 0, tzinfo=timezone.utc),  # 00:00 Tokyo 01/03
         )
@@ -310,7 +311,7 @@ class TestBuscarDia:
 
     def test_junta_thoughts_e_contexto_do_mesmo_dia(self):
         armazenamento = Armazenamento(":memory:")
-        entry = ThoughtEntry(
+        entry = Despejo(
             conteudo="pensamento",
             instante=datetime(2026, 1, 1, 15, 0, tzinfo=timezone.utc),  # 00:00 Tokyo 01/02
         )
@@ -320,12 +321,12 @@ class TestBuscarDia:
 
         dia = armazenamento.buscar_dia(date(2026, 1, 2), self.TOKYO)
 
-        assert dia == Dia(thoughts=[entry], contexto=contexto)
+        assert dia == Dia(despejos=[entry], contexto=contexto)
         armazenamento.fechar()
 
     def test_dia_sem_contexto_e_none(self):
         armazenamento = Armazenamento(":memory:")
-        entry = ThoughtEntry(
+        entry = Despejo(
             conteudo="pensamento",
             instante=datetime(2026, 1, 1, 15, 0, tzinfo=timezone.utc),
         )
@@ -334,7 +335,7 @@ class TestBuscarDia:
         dia = armazenamento.buscar_dia(date(2026, 1, 2), self.TOKYO)
 
         assert dia.contexto is None
-        assert dia.thoughts == [entry]
+        assert dia.despejos == [entry]
         armazenamento.fechar()
 
     def test_dia_sem_thoughts_e_lista_vazia(self):
@@ -344,14 +345,14 @@ class TestBuscarDia:
 
         dia = armazenamento.buscar_dia(date(2026, 1, 2), self.TOKYO)
 
-        assert dia.thoughts == []
+        assert dia.despejos == []
         assert dia.contexto == contexto
         armazenamento.fechar()
 
     def test_dia_totalmente_vazio(self):
         armazenamento = Armazenamento(":memory:")
         dia = armazenamento.buscar_dia(date(2026, 1, 2), self.TOKYO)
-        assert dia == Dia(thoughts=[], contexto=None)
+        assert dia == Dia(despejos=[], contexto=None)
         armazenamento.fechar()
 
 
@@ -412,7 +413,7 @@ class TestOffsetHistorico:
         # 01/07 é verão → EDT (UTC-4). 00:30 local == 04:30 UTC.
         # Com offset fixo EST (-5), 04:30 UTC viraria 23:30 de 30/06 e cairia no dia
         # anterior — o thought sumiria da busca por 01/07. ZoneInfo evita isso.
-        t = ThoughtEntry(
+        t = Despejo(
             conteudo="verao",
             instante=datetime(2026, 7, 1, 4, 30, tzinfo=timezone.utc),
         )
@@ -446,3 +447,59 @@ class TestListarContextosEnergia:
         [(_, ctx)] = armazenamento.listar_contextos("2026-01-01", "2026-01-01")
         assert ctx.energia == {}
         armazenamento.fechar()
+
+
+class TestMigracaoThoughts:
+    def _criar_banco_antigo(self, caminho: str, id_: str, conteudo: str, instante: str):
+        conexao = sqlite3.connect(caminho)
+        conexao.execute(
+            """
+            CREATE TABLE thoughts (
+                id TEXT PRIMARY KEY,
+                conteudo TEXT NOT NULL,
+                instante TEXT NOT NULL
+            )
+            """
+        )
+        conexao.execute(
+            "INSERT INTO thoughts (id, conteudo, instante) VALUES (?, ?, ?)",
+            (id_, conteudo, instante),
+        )
+        conexao.commit()
+        conexao.close()
+
+    def test_banco_antigo_e_migrado(self, tmp_path):
+        caminho = tmp_path / "antigo.db"
+        id_ = str(uuid.uuid4())
+        instante = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
+        self._criar_banco_antigo(str(caminho), id_, "pensamento antigo", instante)
+
+        armazenamento = Armazenamento(str(caminho))
+        resultado = armazenamento.listar()
+
+        assert len(resultado) == 1
+        assert isinstance(resultado[0], Despejo)
+        assert resultado[0].id == id_
+
+        tabelas = {
+            nome for (nome,) in armazenamento._conexao.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "thoughts" not in tabelas
+        assert "despejos" in tabelas
+        armazenamento.fechar()
+
+    def test_migracao_idempotente(self, tmp_path):
+        caminho = tmp_path / "antigo.db"
+        id_ = str(uuid.uuid4())
+        instante = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
+        self._criar_banco_antigo(str(caminho), id_, "pensamento antigo", instante)
+
+        armazenamento1 = Armazenamento(str(caminho))
+        armazenamento1.fechar()
+
+        armazenamento2 = Armazenamento(str(caminho))
+        cursor = armazenamento2._conexao.execute("SELECT COUNT(*) FROM despejos")
+        assert cursor.fetchone()[0] == 1
+        armazenamento2.fechar()

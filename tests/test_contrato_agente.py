@@ -10,7 +10,7 @@ from limencore.agente import (
     SeletorDePergunta,
     SeletorGenerico,
 )
-from limencore.entry import ThoughtEntry
+from limencore.despejo import Despejo
 
 
 class TestContratoAgente:
@@ -37,7 +37,7 @@ class TestContratoAgente:
         assert SeletorDePergunta is SeletorDeMovimento
 
     def test_generico_via_contrato_devolve_movimento(self):
-        entry = ThoughtEntry(conteudo="x")
+        entry = Despejo(conteudo="x")
         seletor = SeletorGenerico()
         assert isinstance(seletor, SeletorDeMovimento)
         mov = seletor.selecionar(entry)

@@ -12,7 +12,7 @@ class Forma(Enum):
 @dataclass(frozen=True)
 class Movimento:
     forma: Forma
-    alvos: tuple[str, ...]  # ids dos ThoughtEntry que este movimento trata
+    alvos: tuple[str, ...]  # ids dos Despejo que este movimento trata
 
     def __post_init__(self):
         if not isinstance(self.forma, Forma):

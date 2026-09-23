@@ -5,12 +5,12 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from limencore.ambient import AreaEnergia, ContextoAmbiente
-from limencore.entry import ThoughtEntry
+from limencore.despejo import Despejo
 
 
 @dataclass(frozen=True)
 class Dia:
-    thoughts: list[ThoughtEntry]
+    despejos: list[Despejo]
     contexto: ContextoAmbiente | None
 
 
@@ -21,9 +21,17 @@ class Armazenamento:
         self._inicializar()
 
     def _inicializar(self):
+        tabelas = {
+            nome for (nome,) in self._conexao.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "thoughts" in tabelas and "despejos" not in tabelas:
+            self._conexao.execute("ALTER TABLE thoughts RENAME TO despejos")
+
         self._conexao.execute(
             """
-            CREATE TABLE IF NOT EXISTS thoughts (
+            CREATE TABLE IF NOT EXISTS despejos (
                 id TEXT PRIMARY KEY,
                 conteudo TEXT NOT NULL,
                 instante TEXT NOT NULL
@@ -52,9 +60,9 @@ class Armazenamento:
         )
         self._conexao.commit()
 
-    def salvar(self, entry: ThoughtEntry):
+    def salvar(self, entry: Despejo):
         self._conexao.execute(
-            "INSERT INTO thoughts (id, conteudo, instante) VALUES (?, ?, ?)",
+            "INSERT INTO despejos (id, conteudo, instante) VALUES (?, ?, ?)",
             (entry.id, entry.conteudo, entry.instante.isoformat()),
         )
         self._conexao.commit()
@@ -102,12 +110,12 @@ class Armazenamento:
         )
         self._conexao.commit()
 
-    def listar(self) -> list[ThoughtEntry]:
+    def listar(self) -> list[Despejo]:
         cursor = self._conexao.execute(
-            "SELECT id, conteudo, instante FROM thoughts ORDER BY instante"
+            "SELECT id, conteudo, instante FROM despejos ORDER BY instante"
         )
         return [
-            ThoughtEntry(
+            Despejo(
                 id=id_,
                 conteudo=conteudo,
                 instante=datetime.fromisoformat(instante),
@@ -135,15 +143,15 @@ class Armazenamento:
             energia=energia_dict,
         )
 
-    def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[ThoughtEntry]:
-        #def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[ThoughtEntry]:
-        # Lembrar -> thoughts guardam 'instante' em UTC; "o dia X local" é uma JANELA em UTC,
+    def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[Despejo]:
+        #def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[Despejo]:
+        # Lembrar -> despejos guardam 'instante' em UTC; "o dia X local" é uma JANELA em UTC,
         # não um match de data. Montei meia-noite local -> +1 dia, convertemos as
         # duas pontas pra UTC e filtramos [inicio, fim). Assim um despejo das 23h
-        # não vaza pro dia seguinte. 
-        
+        # não vaza pro dia seguinte.
+
         #O 'tz' tem que ser o mesmo usado ao salvar o
-        # entry_date, senão thought e contexto discordam sobre que dia é.
+        # entry_date, senão despejo e contexto discordam sobre que dia é.
 
 
         inicio_local = datetime(
@@ -154,14 +162,14 @@ class Armazenamento:
         fim_utc = fim_local.astimezone(timezone.utc)
         cursor = self._conexao.execute(
             """
-            SELECT id, conteudo, instante FROM thoughts
+            SELECT id, conteudo, instante FROM despejos
               WHERE instante >= ? AND instante < ?
               ORDER BY instante
             """,
             (inicio_utc.isoformat(), fim_utc.isoformat()),
         )
         return [
-            ThoughtEntry(
+            Despejo(
                 id=id_,
                 conteudo=conteudo,
                 instante=datetime.fromisoformat(instante),
@@ -170,9 +178,9 @@ class Armazenamento:
         ]
 
     def buscar_dia(self, data_local: date, tz: ZoneInfo) -> Dia:
-        thoughts = self.buscar_por_data(data_local, tz)
+        despejos = self.buscar_por_data(data_local, tz)
         contexto = self.buscar_contexto(data_local.isoformat())
-        return Dia(thoughts=thoughts, contexto=contexto)
+        return Dia(despejos=despejos, contexto=contexto)
 
     def listar_contextos(
         self, inicio: str, fim: str

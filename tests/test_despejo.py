@@ -4,70 +4,77 @@ from datetime import datetime, timezone
 
 import pytest
 
-from limencore.entry import ThoughtEntry
+from limencore.despejo import Despejo
 
 
 class TestValido:
     def test_conteudo_valido(self):
-        e = ThoughtEntry(conteudo="um pensamento qualquer")
+        e = Despejo(conteudo="um pensamento qualquer")
         assert e.conteudo == "um pensamento qualquer"
 
     def test_instante_gerado_automaticamente(self):
         antes = datetime.now(timezone.utc)
-        e = ThoughtEntry(conteudo="x")
+        e = Despejo(conteudo="x")
         depois = datetime.now(timezone.utc)
         assert antes <= e.instante <= depois
         assert e.instante.tzinfo is not None
 
     def test_id_gerado_automaticamente(self):
-        e1 = ThoughtEntry(conteudo="x")
-        e2 = ThoughtEntry(conteudo="y")
+        e1 = Despejo(conteudo="x")
+        e2 = Despejo(conteudo="y")
         assert e1.id != e2.id
         assert isinstance(e1.id, str) and e1.id
 
     def test_instante_explicito_utc_aceito(self):
         instante = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        e = ThoughtEntry(conteudo="x", instante=instante)
+        e = Despejo(conteudo="x", instante=instante)
         assert e.instante == instante
 
 
 class TestInvalido:
     def test_conteudo_vazio_falha(self):
         with pytest.raises(ValueError):
-            ThoughtEntry(conteudo="")
+            Despejo(conteudo="")
 
     def test_conteudo_so_espacos_falha(self):
         with pytest.raises(ValueError):
-            ThoughtEntry(conteudo="   ")
+            Despejo(conteudo="   ")
 
     def test_instante_sem_timezone_falha(self):
         with pytest.raises(ValueError):
-            ThoughtEntry(conteudo="x", instante=datetime(2026, 1, 1))
+            Despejo(conteudo="x", instante=datetime(2026, 1, 1))
 
 
 class TestIdFormato:
     def test_id_uuid4_valido_aceito(self):
         id_valido = str(uuid.uuid4())
-        e = ThoughtEntry(conteudo="x", id=id_valido)
+        e = Despejo(conteudo="x", id=id_valido)
         assert e.id == id_valido
 
     def test_id_nao_uuid_falha(self):
         with pytest.raises(ValueError):
-            ThoughtEntry(conteudo="x", id="abc")
+            Despejo(conteudo="x", id="abc")
 
     def test_id_uuid_v1_falha(self):
         id_v1 = str(uuid.uuid1())
         with pytest.raises(ValueError):
-            ThoughtEntry(conteudo="x", id=id_v1)
+            Despejo(conteudo="x", id=id_v1)
 
 
 class TestFrozen:
     def test_reatribuir_conteudo_falha(self):
-        e = ThoughtEntry(conteudo="x")
+        e = Despejo(conteudo="x")
         with pytest.raises(dataclasses.FrozenInstanceError):
             e.conteudo = "y"
 
     def test_reatribuir_instante_falha(self):
-        e = ThoughtEntry(conteudo="x")
+        e = Despejo(conteudo="x")
         with pytest.raises(dataclasses.FrozenInstanceError):
             e.instante = datetime.now(timezone.utc)
+
+
+class TestShimEntry:
+    def test_alias_aponta_pro_despejo(self):
+        from limencore.entry import ThoughtEntry
+
+        assert ThoughtEntry is Despejo

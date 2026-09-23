@@ -5,7 +5,7 @@ import pytest
 from limencore.agente.movimento import Forma, Movimento
 from limencore.agente.pergunta import CamadaContencao, Pergunta
 from limencore.agente.seletor import SeletorDeMovimento, SeletorGenerico
-from limencore.entry import ThoughtEntry
+from limencore.despejo import Despejo
 
 
 class TestCamadaContencao:
@@ -36,7 +36,7 @@ class TestSeletorGenerico:
         assert isinstance(seletor, SeletorDeMovimento)
 
     def test_devolve_um_movimento(self):
-        entry = ThoughtEntry(conteudo="hoje foi um dia dificil")
+        entry = Despejo(conteudo="hoje foi um dia dificil")
         mov = SeletorGenerico().selecionar(entry)
         assert isinstance(mov, Movimento)
         assert mov.forma is Forma.UM_SO
@@ -44,8 +44,8 @@ class TestSeletorGenerico:
 
     def test_zero_inteligencia_de_escolha(self):
         seletor = SeletorGenerico()
-        e1 = ThoughtEntry(conteudo="a")
-        e2 = ThoughtEntry(conteudo="pensamento completamente diferente")
+        e1 = Despejo(conteudo="a")
+        e2 = Despejo(conteudo="pensamento completamente diferente")
         m1 = seletor.selecionar(e1)
         m2 = seletor.selecionar(e2)
         # a forma e sempre UM_SO (prova a ausencia de escolha);
