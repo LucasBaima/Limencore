@@ -6,7 +6,7 @@ from .movimento import Forma, Movimento
 
 
 @runtime_checkable
-class SeletorDePergunta(Protocol):
+class SeletorDeMovimento(Protocol):
     """A costura: ponto de extensão para escolha de movimento.
 
     O público entrega o SeletorGenerico como default; implementações
@@ -14,6 +14,11 @@ class SeletorDePergunta(Protocol):
     """
 
     def selecionar(self, entry: ThoughtEntry) -> Movimento: ...
+
+
+# Alias temporario: o repo privado ainda importa este nome.
+# Remover quando o privado migrar para SeletorDeMovimento.
+SeletorDePergunta = SeletorDeMovimento
 
 
 class SeletorGenerico:

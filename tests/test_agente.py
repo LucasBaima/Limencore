@@ -4,7 +4,7 @@ import pytest
 
 from limencore.agente.movimento import Forma, Movimento
 from limencore.agente.pergunta import CamadaContencao, Pergunta
-from limencore.agente.seletor import SeletorDePergunta, SeletorGenerico
+from limencore.agente.seletor import SeletorDeMovimento, SeletorGenerico
 from limencore.entry import ThoughtEntry
 
 
@@ -32,8 +32,8 @@ class TestPergunta:
 
 class TestSeletorGenerico:
     def test_implementa_a_costura(self):
-        seletor: SeletorDePergunta = SeletorGenerico()
-        assert isinstance(seletor, SeletorDePergunta)
+        seletor: SeletorDeMovimento = SeletorGenerico()
+        assert isinstance(seletor, SeletorDeMovimento)
 
     def test_devolve_um_movimento(self):
         entry = ThoughtEntry(conteudo="hoje foi um dia dificil")
