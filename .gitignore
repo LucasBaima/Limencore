@@ -11,8 +11,6 @@ __pycache__/
 .env.*
 !.env.example
 
-# Espelho da fronteira <- memória persistente claudian
-CLAUDE.md
 
 # Dados pessoais locais (SQLite + satélites) — NUNCA versionar
 *.db
@@ -20,4 +18,4 @@ CLAUDE.md
 *.sqlite3
 *.db-journal
 *.db-wal
-*.db-shm
+*.db-shm
