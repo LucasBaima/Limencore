@@ -679,3 +679,125 @@ class TestUtcNaGravacao:
             fio_a.id,
         ]
         armazenamento.fechar()
+
+
+class TestHistorico:
+    def _fio_salvo(self, armazenamento):
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio)
+        return fio
+
+    def test_tabela_transicoes_existe(self):
+        armazenamento = Armazenamento(":memory:")
+        cursor = armazenamento._conexao.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='transicoes'"
+        )
+        assert cursor.fetchone() is not None
+        armazenamento.fechar()
+
+    def test_salvar_fio_registra_nascimento(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = self._fio_salvo(armazenamento)
+        [nascimento] = armazenamento.historico(fio.id)
+        assert nascimento.fio_id == fio.id
+        assert nascimento.de is None
+        assert nascimento.para is EstadoFio.JOGADO
+        armazenamento.fechar()
+
+    def test_historico_completo_em_ordem(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = self._fio_salvo(armazenamento)
+        fio = armazenamento.atualizar_estado(fio, EstadoFio.ESCOLHIDO)
+        fio = armazenamento.atualizar_estado(fio, EstadoFio.GUARDADO)
+        fio = armazenamento.atualizar_estado(fio, EstadoFio.ESCOLHIDO)
+        assert [(t.de, t.para) for t in armazenamento.historico(fio.id)] == [
+            (None, EstadoFio.JOGADO),
+            (EstadoFio.JOGADO, EstadoFio.ESCOLHIDO),
+            (EstadoFio.ESCOLHIDO, EstadoFio.GUARDADO),
+            (EstadoFio.GUARDADO, EstadoFio.ESCOLHIDO),
+        ]
+        armazenamento.fechar()
+
+    def test_transicao_invalida_nao_registra(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = self._fio_salvo(armazenamento)
+        with pytest.raises(TransicaoInvalida):
+            armazenamento.atualizar_estado(fio, EstadoFio.RESOLVIDO)
+        assert len(armazenamento.historico(fio.id)) == 1
+        armazenamento.fechar()
+
+    def test_fio_desatualizado_nao_registra(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = self._fio_salvo(armazenamento)
+        armazenamento.atualizar_estado(fio, EstadoFio.ESCOLHIDO)
+        with pytest.raises(ValueError, match="desatualizado"):
+            armazenamento.atualizar_estado(fio, EstadoFio.GUARDADO)
+        assert len(armazenamento.historico(fio.id)) == 2
+        armazenamento.fechar()
+
+    def test_instante_em_utc(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = self._fio_salvo(armazenamento)
+        (bruto,) = armazenamento._conexao.execute(
+            "SELECT instante FROM transicoes"
+        ).fetchone()
+        assert bruto.endswith("+00:00")
+        [nascimento] = armazenamento.historico(fio.id)
+        assert nascimento.instante.utcoffset() == timedelta(0)
+        armazenamento.fechar()
+
+    def test_historico_de_fio_inexistente(self):
+        armazenamento = Armazenamento(":memory:")
+        assert armazenamento.historico(str(uuid.uuid4())) == []
+        armazenamento.fechar()
+
+    def test_historicos_separados_por_fio(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento com dois fios")
+        armazenamento.salvar(despejo)
+        fio_a = Fio(despejo_id=despejo.id)
+        fio_b = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio_a)
+        armazenamento.salvar_fio(fio_b)
+        armazenamento.atualizar_estado(fio_a, EstadoFio.ESCOLHIDO)
+        historico_a = armazenamento.historico(fio_a.id)
+        historico_b = armazenamento.historico(fio_b.id)
+        assert all(t.fio_id == fio_a.id for t in historico_a)
+        assert all(t.fio_id == fio_b.id for t in historico_b)
+        assert [(t.de, t.para) for t in historico_a] == [
+            (None, EstadoFio.JOGADO),
+            (EstadoFio.JOGADO, EstadoFio.ESCOLHIDO),
+        ]
+        assert [(t.de, t.para) for t in historico_b] == [(None, EstadoFio.JOGADO)]
+        armazenamento.fechar()
+
+
+class TestAtomicidade:
+    def _falhar(self, *args, **kwargs):
+        raise RuntimeError("falha simulada no registro")
+
+    def test_salvar_fio_desfaz_se_transicao_falhar(self, monkeypatch):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        monkeypatch.setattr(armazenamento, "_registrar_transicao", self._falhar)
+        with pytest.raises(RuntimeError):
+            armazenamento.salvar_fio(Fio(despejo_id=despejo.id))
+        assert armazenamento.buscar_fios(despejo.id) == []
+        armazenamento.fechar()
+
+    def test_atualizar_estado_desfaz_se_transicao_falhar(self, monkeypatch):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio)
+        monkeypatch.setattr(armazenamento, "_registrar_transicao", self._falhar)
+        with pytest.raises(RuntimeError):
+            armazenamento.atualizar_estado(fio, EstadoFio.ESCOLHIDO)
+        [salvo] = armazenamento.buscar_fios(despejo.id)
+        assert salvo.estado is EstadoFio.JOGADO
+        assert len(armazenamento.historico(fio.id)) == 1
+        armazenamento.fechar()

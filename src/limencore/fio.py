@@ -53,3 +53,20 @@ class Fio:  # Fio = unidade de um despejo que carrega estado (a "thread" do proc
         if novo not in TRANSICOES[self.estado]:
             raise TransicaoInvalida(f"transicao proibida: {self.estado.name} -> {novo.name}")
         return replace(self, estado=novo)
+
+
+@dataclass(frozen=True)
+class Transicao:  # registro de uma mudanca de estado; de=None e o nascimento do fio
+    fio_id: str
+    de: EstadoFio | None
+    para: EstadoFio
+    instante: datetime
+
+    def __post_init__(self):
+        _validar_uuid4(self.fio_id, "fio_id")
+        if self.de is not None and not isinstance(self.de, EstadoFio):
+            raise ValueError(f"de invalido: esperado EstadoFio ou None, veio {self.de!r}")
+        if not isinstance(self.para, EstadoFio):
+            raise ValueError(f"para invalido: esperado EstadoFio, veio {self.para!r}")
+        if self.instante.tzinfo is None:
+            raise ValueError("instante sem timezone: use datetime timezone-aware (UTC)")

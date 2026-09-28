@@ -1,10 +1,10 @@
 import dataclasses
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
-from limencore.fio import EstadoFio, Fio, TransicaoInvalida
+from limencore.fio import EstadoFio, Fio, Transicao, TransicaoInvalida
 
 
 PERMITIDAS = {
@@ -94,3 +94,45 @@ class TestTransicoes:
 
     def test_transicao_invalida_e_value_error(self):
         assert issubclass(TransicaoInvalida, ValueError)
+
+
+class TestTransicao:
+    def test_nascimento_aceito(self):
+        t = Transicao(
+            fio_id=str(uuid.uuid4()),
+            de=None,
+            para=EstadoFio.JOGADO,
+            instante=datetime.now(timezone.utc),
+        )
+        assert t.de is None
+        assert t.para is EstadoFio.JOGADO
+
+    def test_frozen(self):
+        t = Transicao(
+            fio_id=str(uuid.uuid4()),
+            de=None,
+            para=EstadoFio.JOGADO,
+            instante=datetime.now(timezone.utc),
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            t.para = EstadoFio.ESCOLHIDO
+
+    @pytest.mark.parametrize(
+        "campos",
+        [
+            {"fio_id": "abc"},
+            {"de": "JOGADO"},
+            {"para": "JOGADO"},
+            {"para": None},
+            {"instante": datetime(2026, 1, 1, 10, 0)},
+        ],
+    )
+    def test_campos_invalidos(self, campos):
+        base = {
+            "fio_id": str(uuid.uuid4()),
+            "de": None,
+            "para": EstadoFio.JOGADO,
+            "instante": datetime.now(timezone.utc),
+        }
+        with pytest.raises(ValueError):
+            Transicao(**{**base, **campos})

@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from limencore.ambient import AreaEnergia, ContextoAmbiente
 from limencore.despejo import Despejo
-from limencore.fio import EstadoFio, Fio
+from limencore.fio import EstadoFio, Fio, Transicao
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,17 @@ class Armazenamento:
         )
         self._conexao.execute(
             """
+            CREATE TABLE IF NOT EXISTS transicoes (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                fio_id TEXT NOT NULL REFERENCES fios(id),
+                de TEXT,
+                para TEXT NOT NULL,
+                instante TEXT NOT NULL
+            )
+            """
+        )
+        self._conexao.execute(
+            """
             CREATE TABLE IF NOT EXISTS contexto_dia (
                 entry_date TEXT PRIMARY KEY,
                 sono_horas REAL,
@@ -80,18 +91,31 @@ class Armazenamento:
         )
         self._conexao.commit()
 
-    def salvar_fio(self, fio: Fio) -> None:
+    def _registrar_transicao(self, fio_id: str, de: EstadoFio | None, para: EstadoFio) -> None:
+        # sempre UTC no banco: ordenacao e filtros comparam texto
         self._conexao.execute(
-            "INSERT INTO fios (id, despejo_id, estado, criado_em) VALUES (?, ?, ?, ?)",
-            # sempre UTC no banco: ordenacao e filtros comparam texto
-            (
-                fio.id,
-                fio.despejo_id,
-                fio.estado.name,
-                fio.criado_em.astimezone(timezone.utc).isoformat(),
-            ),
+            "INSERT INTO transicoes (fio_id, de, para, instante) VALUES (?, ?, ?, ?)",
+            (fio_id, de.name if de else None, para.name,
+             datetime.now(timezone.utc).isoformat()),
         )
-        self._conexao.commit()
+
+    def salvar_fio(self, fio: Fio) -> None:
+        try:
+            self._conexao.execute(
+                "INSERT INTO fios (id, despejo_id, estado, criado_em) VALUES (?, ?, ?, ?)",
+                # sempre UTC no banco: ordenacao e filtros comparam texto
+                (
+                    fio.id,
+                    fio.despejo_id,
+                    fio.estado.name,
+                    fio.criado_em.astimezone(timezone.utc).isoformat(),
+                ),
+            )
+            self._registrar_transicao(fio.id, None, fio.estado)
+            self._conexao.commit()
+        except Exception:
+            self._conexao.rollback()
+            raise
 
     def buscar_fios(self, despejo_id: str) -> list[Fio]:
         cursor = self._conexao.execute(
@@ -114,14 +138,34 @@ class Armazenamento:
 
     def atualizar_estado(self, fio: Fio, novo: EstadoFio) -> Fio:
         novo_fio = fio.transicionar(novo)
-        cursor = self._conexao.execute(
-            "UPDATE fios SET estado = ? WHERE id = ? AND estado = ?",
-            (novo.name, fio.id, fio.estado.name),
-        )
-        if cursor.rowcount == 0:
-            raise ValueError("fio nao encontrado ou estado desatualizado")
-        self._conexao.commit()
+        try:
+            cursor = self._conexao.execute(
+                "UPDATE fios SET estado = ? WHERE id = ? AND estado = ?",
+                (novo.name, fio.id, fio.estado.name),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("fio nao encontrado ou estado desatualizado")
+            self._registrar_transicao(fio.id, fio.estado, novo)
+            self._conexao.commit()
+        except Exception:
+            self._conexao.rollback()
+            raise
         return novo_fio
+
+    def historico(self, fio_id: str) -> list[Transicao]:
+        cursor = self._conexao.execute(
+            "SELECT fio_id, de, para, instante FROM transicoes WHERE fio_id = ? ORDER BY seq",
+            (fio_id,),
+        )
+        return [
+            Transicao(
+                fio_id=fio_id_,
+                de=EstadoFio[de] if de is not None else None,
+                para=EstadoFio[para],
+                instante=datetime.fromisoformat(instante),
+            )
+            for fio_id_, de, para, instante in cursor.fetchall()
+        ]
 
     def _canonicalizar_energia(self, energia: dict[str, int]) -> dict[str, int]:
         defaults = {area.value for area in AreaEnergia}
@@ -200,7 +244,6 @@ class Armazenamento:
         )
 
     def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[Despejo]:
-        #def buscar_por_data(self, data_local: date, tz: ZoneInfo) -> list[Despejo]:
         # Lembrar -> despejos guardam 'instante' em UTC; "o dia X local" é uma JANELA em UTC,
         # não um match de data. Montei meia-noite local -> +1 dia, convertemos as
         # duas pontas pra UTC e filtramos [inicio, fim). Assim um despejo das 23h
