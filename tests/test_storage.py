@@ -1,12 +1,13 @@
 import sqlite3
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from limencore.ambient import ContextoAmbiente
 from limencore.despejo import Despejo
+from limencore.fio import EstadoFio, Fio, TransicaoInvalida
 from limencore.storage import Armazenamento, Dia
 
 
@@ -503,3 +504,178 @@ class TestMigracaoThoughts:
         cursor = armazenamento2._conexao.execute("SELECT COUNT(*) FROM despejos")
         assert cursor.fetchone()[0] == 1
         armazenamento2.fechar()
+
+
+class TestFios:
+    def test_tabela_fios_existe(self):
+        armazenamento = Armazenamento(":memory:")
+        cursor = armazenamento._conexao.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='fios'"
+        )
+        assert cursor.fetchone() is not None
+        armazenamento.fechar()
+
+    def test_salvar_e_buscar(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento com fios")
+        armazenamento.salvar(despejo)
+        fio1 = Fio(
+            despejo_id=despejo.id,
+            criado_em=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+        )
+        fio2 = Fio(
+            despejo_id=despejo.id,
+            criado_em=datetime(2026, 1, 1, 11, 0, tzinfo=timezone.utc),
+        )
+        armazenamento.salvar_fio(fio2)
+        armazenamento.salvar_fio(fio1)
+        assert armazenamento.buscar_fios(despejo.id) == [fio1, fio2]
+        armazenamento.fechar()
+
+    def test_buscar_despejo_sem_fios(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento sem fios")
+        armazenamento.salvar(despejo)
+        assert armazenamento.buscar_fios(despejo.id) == []
+        armazenamento.fechar()
+
+    def test_fio_de_despejo_inexistente_falha(self):
+        armazenamento = Armazenamento(":memory:")
+        with pytest.raises(sqlite3.IntegrityError):
+            armazenamento.salvar_fio(Fio(despejo_id=str(uuid.uuid4())))
+        armazenamento.fechar()
+
+    def test_estado_gravado_pelo_nome(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio)
+        armazenamento.atualizar_estado(fio, EstadoFio.ESCOLHIDO)
+        cursor = armazenamento._conexao.execute("SELECT estado FROM fios")
+        assert cursor.fetchone()[0] == "ESCOLHIDO"
+        armazenamento.fechar()
+
+    def test_atualizar_estado_persiste(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio)
+        retorno = armazenamento.atualizar_estado(fio, EstadoFio.ESCOLHIDO)
+        assert retorno.estado is EstadoFio.ESCOLHIDO
+        [salvo] = armazenamento.buscar_fios(despejo.id)
+        assert salvo.estado is EstadoFio.ESCOLHIDO
+        armazenamento.fechar()
+
+    def test_atualizar_transicao_invalida_nao_grava(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio)
+        with pytest.raises(TransicaoInvalida):
+            armazenamento.atualizar_estado(fio, EstadoFio.RESOLVIDO)
+        [salvo] = armazenamento.buscar_fios(despejo.id)
+        assert salvo.estado is EstadoFio.JOGADO
+        armazenamento.fechar()
+
+    def test_atualizar_com_fio_desatualizado_falha(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        fio_antigo = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio_antigo)
+        armazenamento.atualizar_estado(fio_antigo, EstadoFio.ESCOLHIDO)
+        with pytest.raises(ValueError, match="desatualizado"):
+            armazenamento.atualizar_estado(fio_antigo, EstadoFio.GUARDADO)
+        [salvo] = armazenamento.buscar_fios(despejo.id)
+        assert salvo.estado is EstadoFio.ESCOLHIDO
+        armazenamento.fechar()
+
+
+MAIS_5 = timezone(timedelta(hours=5))
+MENOS_3 = timezone(timedelta(hours=-3))
+
+
+class TestUtcNaGravacao:
+    def _despejo_mais_5(self):
+        return Despejo(
+            conteudo="pensamento em outro fuso",
+            instante=datetime(2026, 1, 2, 1, 0, tzinfo=MAIS_5),
+        )
+
+    def test_despejo_gravado_em_utc(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento.salvar(self._despejo_mais_5())
+        cursor = armazenamento._conexao.execute("SELECT instante FROM despejos")
+        assert cursor.fetchone()[0] == "2026-01-01T20:00:00+00:00"
+        armazenamento.fechar()
+
+    def test_despejo_lido_e_o_mesmo_instante(self):
+        armazenamento = Armazenamento(":memory:")
+        original = self._despejo_mais_5()
+        armazenamento.salvar(original)
+        [lido] = armazenamento.listar()
+        assert lido.instante == original.instante
+        assert lido.instante.utcoffset() == timedelta(0)
+        armazenamento.fechar()
+
+    def test_buscar_por_data_com_fuso_nao_utc(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo_mais_5()
+        armazenamento.salvar(despejo)
+        dia_1 = armazenamento.buscar_por_data(date(2026, 1, 1), ZoneInfo("UTC"))
+        dia_2 = armazenamento.buscar_por_data(date(2026, 1, 2), ZoneInfo("UTC"))
+        assert [d.id for d in dia_1] == [despejo.id]
+        assert despejo.id not in [d.id for d in dia_2]
+        armazenamento.fechar()
+
+    def test_listar_ordena_por_instante_real(self):
+        armazenamento = Armazenamento(":memory:")
+        a = Despejo(
+            conteudo="despejo A",
+            instante=datetime(2026, 1, 1, 12, 0, tzinfo=MENOS_3),
+        )
+        b = Despejo(
+            conteudo="despejo B",
+            instante=datetime(2026, 1, 1, 14, 0, tzinfo=timezone.utc),
+        )
+        armazenamento.salvar(a)
+        armazenamento.salvar(b)
+        assert [d.id for d in armazenamento.listar()] == [b.id, a.id]
+        armazenamento.fechar()
+
+    def test_fio_gravado_em_utc(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        armazenamento.salvar_fio(
+            Fio(
+                despejo_id=despejo.id,
+                criado_em=datetime(2026, 1, 2, 1, 0, tzinfo=MAIS_5),
+            )
+        )
+        cursor = armazenamento._conexao.execute("SELECT criado_em FROM fios")
+        assert cursor.fetchone()[0] == "2026-01-01T20:00:00+00:00"
+        armazenamento.fechar()
+
+    def test_buscar_fios_ordena_por_instante_real(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        fio_a = Fio(
+            despejo_id=despejo.id,
+            criado_em=datetime(2026, 1, 1, 12, 0, tzinfo=MENOS_3),
+        )
+        fio_b = Fio(
+            despejo_id=despejo.id,
+            criado_em=datetime(2026, 1, 1, 14, 0, tzinfo=timezone.utc),
+        )
+        armazenamento.salvar_fio(fio_a)
+        armazenamento.salvar_fio(fio_b)
+        assert [f.id for f in armazenamento.buscar_fios(despejo.id)] == [
+            fio_b.id,
+            fio_a.id,
+        ]
+        armazenamento.fechar()

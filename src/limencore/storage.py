@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from limencore.ambient import AreaEnergia, ContextoAmbiente
 from limencore.despejo import Despejo
+from limencore.fio import EstadoFio, Fio
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class Armazenamento:
     def __init__(self, caminho: str = "limencore.db"):
         self.caminho = caminho
         self._conexao = sqlite3.connect(caminho)
+        self._conexao.execute("PRAGMA foreign_keys = ON")
         self._inicializar()
 
     def _inicializar(self):
@@ -35,6 +37,16 @@ class Armazenamento:
                 id TEXT PRIMARY KEY,
                 conteudo TEXT NOT NULL,
                 instante TEXT NOT NULL
+            )
+            """
+        )
+        self._conexao.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fios (
+                id TEXT PRIMARY KEY,
+                despejo_id TEXT NOT NULL REFERENCES despejos(id),
+                estado TEXT NOT NULL,
+                criado_em TEXT NOT NULL
             )
             """
         )
@@ -63,9 +75,53 @@ class Armazenamento:
     def salvar(self, entry: Despejo):
         self._conexao.execute(
             "INSERT INTO despejos (id, conteudo, instante) VALUES (?, ?, ?)",
-            (entry.id, entry.conteudo, entry.instante.isoformat()),
+            # sempre UTC no banco: ordenacao e filtros comparam texto
+            (entry.id, entry.conteudo, entry.instante.astimezone(timezone.utc).isoformat()),
         )
         self._conexao.commit()
+
+    def salvar_fio(self, fio: Fio) -> None:
+        self._conexao.execute(
+            "INSERT INTO fios (id, despejo_id, estado, criado_em) VALUES (?, ?, ?, ?)",
+            # sempre UTC no banco: ordenacao e filtros comparam texto
+            (
+                fio.id,
+                fio.despejo_id,
+                fio.estado.name,
+                fio.criado_em.astimezone(timezone.utc).isoformat(),
+            ),
+        )
+        self._conexao.commit()
+
+    def buscar_fios(self, despejo_id: str) -> list[Fio]:
+        cursor = self._conexao.execute(
+            """
+            SELECT id, despejo_id, estado, criado_em FROM fios
+              WHERE despejo_id = ?
+              ORDER BY criado_em, id
+            """,
+            (despejo_id,),
+        )
+        return [
+            Fio(
+                id=id_,
+                despejo_id=despejo_id_,
+                estado=EstadoFio[estado],
+                criado_em=datetime.fromisoformat(criado_em),
+            )
+            for id_, despejo_id_, estado, criado_em in cursor.fetchall()
+        ]
+
+    def atualizar_estado(self, fio: Fio, novo: EstadoFio) -> Fio:
+        novo_fio = fio.transicionar(novo)
+        cursor = self._conexao.execute(
+            "UPDATE fios SET estado = ? WHERE id = ? AND estado = ?",
+            (novo.name, fio.id, fio.estado.name),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("fio nao encontrado ou estado desatualizado")
+        self._conexao.commit()
+        return novo_fio
 
     def _canonicalizar_energia(self, energia: dict[str, int]) -> dict[str, int]:
         defaults = {area.value for area in AreaEnergia}
