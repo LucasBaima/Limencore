@@ -801,3 +801,183 @@ class TestAtomicidade:
         assert salvo.estado is EstadoFio.JOGADO
         assert len(armazenamento.historico(fio.id)) == 1
         armazenamento.fechar()
+
+
+def _levar_a(armazenamento, fio, estado):
+    caminhos = {
+        EstadoFio.JOGADO: [],
+        EstadoFio.ESCOLHIDO: [EstadoFio.ESCOLHIDO],
+        EstadoFio.GUARDADO: [EstadoFio.GUARDADO],
+        EstadoFio.RESOLVIDO: [EstadoFio.ESCOLHIDO, EstadoFio.RESOLVIDO],
+        EstadoFio.DESCARTADO: [EstadoFio.DESCARTADO],
+    }
+    for passo in caminhos[estado]:
+        fio = armazenamento.atualizar_estado(fio, passo)
+    return fio
+
+
+class TestMesa:
+    def _despejo(self, armazenamento):
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        return despejo
+
+    def _fio(self, armazenamento, despejo, estado=EstadoFio.JOGADO, criado_em=None):
+        fio = Fio(despejo_id=despejo.id) if criado_em is None else Fio(
+            despejo_id=despejo.id, criado_em=criado_em
+        )
+        armazenamento.salvar_fio(fio)
+        return _levar_a(armazenamento, fio, estado)
+
+    def test_mesa_vazia(self):
+        armazenamento = Armazenamento(":memory:")
+        assert armazenamento.mesa() == []
+        armazenamento.fechar()
+
+    def test_so_abertos(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        jogado = self._fio(armazenamento, despejo, EstadoFio.JOGADO)
+        escolhido = self._fio(armazenamento, despejo, EstadoFio.ESCOLHIDO)
+        for estado in (EstadoFio.GUARDADO, EstadoFio.RESOLVIDO, EstadoFio.DESCARTADO):
+            self._fio(armazenamento, despejo, estado)
+        mesa = armazenamento.mesa()
+        assert len(mesa) == 2
+        assert set(mesa) == {jogado, escolhido}
+        armazenamento.fechar()
+
+    def test_escolhido_primeiro(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        base = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        self._fio(armazenamento, despejo, criado_em=base)
+        self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=1))
+        escolhido = self._fio(
+            armazenamento, despejo, EstadoFio.ESCOLHIDO, criado_em=base + timedelta(hours=2)
+        )
+        mesa = armazenamento.mesa()
+        assert mesa[0] == escolhido
+        assert [f.estado for f in mesa[1:]] == [EstadoFio.JOGADO, EstadoFio.JOGADO]
+        armazenamento.fechar()
+
+    def test_ordem_do_despejo(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        base = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        terceiro = self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=2))
+        primeiro = self._fio(armazenamento, despejo, criado_em=base)
+        segundo = self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=1))
+        assert armazenamento.mesa() == [primeiro, segundo, terceiro]
+        armazenamento.fechar()
+
+    def test_todos_os_despejos(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo_a = self._despejo(armazenamento)
+        despejo_b = self._despejo(armazenamento)
+        fio_a = self._fio(armazenamento, despejo_a)
+        fio_b = self._fio(armazenamento, despejo_b)
+        assert set(armazenamento.mesa()) == {fio_a, fio_b}
+        armazenamento.fechar()
+
+
+class TestGuardados:
+    def _despejo(self, armazenamento):
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        return despejo
+
+    def _fio(self, armazenamento, despejo, estado=EstadoFio.JOGADO):
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio)
+        return _levar_a(armazenamento, fio, estado)
+
+    def _envelhecer_guardado(self, armazenamento, fio_id, instante):
+        armazenamento._conexao.execute(
+            "UPDATE transicoes SET instante = ? WHERE fio_id = ? AND para = 'GUARDADO'",
+            (instante, fio_id),
+        )
+        armazenamento._conexao.commit()
+
+    def test_guardados_vazio(self):
+        armazenamento = Armazenamento(":memory:")
+        assert armazenamento.guardados() == []
+        armazenamento.fechar()
+
+    def test_so_guardados(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        for estado in (EstadoFio.JOGADO, EstadoFio.ESCOLHIDO,
+                       EstadoFio.RESOLVIDO, EstadoFio.DESCARTADO):
+            self._fio(armazenamento, despejo, estado)
+        guardado = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        assert armazenamento.guardados() == [guardado]
+        armazenamento.fechar()
+
+    def test_mais_recente_primeiro(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        a = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        b = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        assert [f.id for f in armazenamento.guardados()] == [b.id, a.id]
+        armazenamento.fechar()
+
+    def test_reguardar_volta_pro_topo(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        a = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        b = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        a = armazenamento.atualizar_estado(a, EstadoFio.ESCOLHIDO)
+        a = armazenamento.atualizar_estado(a, EstadoFio.GUARDADO)
+        assert [f.id for f in armazenamento.guardados()] == [a.id, b.id]
+        armazenamento.fechar()
+
+    def test_puxado_sai_da_lista(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        a = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        armazenamento.atualizar_estado(a, EstadoFio.ESCOLHIDO)
+        assert armazenamento.guardados() == []
+        armazenamento.fechar()
+
+    def test_desde_filtra(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        a = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        b = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        self._envelhecer_guardado(armazenamento, a.id, "2026-01-01T00:00:00+00:00")
+        desde = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        assert [f.id for f in armazenamento.guardados(desde=desde)] == [b.id]
+        assert [f.id for f in armazenamento.guardados()] == [b.id, a.id]
+        armazenamento.fechar()
+
+    def test_desde_com_fuso_nao_utc(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        a = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        b = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        self._envelhecer_guardado(armazenamento, a.id, "2026-01-01T00:00:00+00:00")
+        desde = datetime(2026, 5, 31, 21, 0, tzinfo=MENOS_3)  # = 2026-06-01T00:00 UTC
+        assert [f.id for f in armazenamento.guardados(desde=desde)] == [b.id]
+        assert [f.id for f in armazenamento.guardados()] == [b.id, a.id]
+        armazenamento.fechar()
+
+    def test_desde_sem_timezone_falha(self):
+        armazenamento = Armazenamento(":memory:")
+        with pytest.raises(ValueError, match="timezone"):
+            armazenamento.guardados(desde=datetime(2026, 1, 1))
+        armazenamento.fechar()
+
+    def test_guardado_sem_historico_nao_some(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        legado_id = str(uuid.uuid4())
+        armazenamento._conexao.execute(
+            "INSERT INTO fios (id, despejo_id, estado, criado_em) VALUES (?, ?, ?, ?)",
+            (legado_id, despejo.id, "GUARDADO", "2025-01-01T00:00:00+00:00"),
+        )
+        armazenamento._conexao.commit()
+        b = self._fio(armazenamento, despejo, EstadoFio.GUARDADO)
+        assert [f.id for f in armazenamento.guardados()] == [b.id, legado_id]
+        desde = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        assert [f.id for f in armazenamento.guardados(desde=desde)] == [b.id]
+        armazenamento.fechar()

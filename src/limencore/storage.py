@@ -117,6 +117,15 @@ class Armazenamento:
             self._conexao.rollback()
             raise
 
+    def _linha_para_fio(self, linha) -> Fio:
+        id_, despejo_id, estado, criado_em = linha
+        return Fio(
+            id=id_,
+            despejo_id=despejo_id,
+            estado=EstadoFio[estado],
+            criado_em=datetime.fromisoformat(criado_em),
+        )
+
     def buscar_fios(self, despejo_id: str) -> list[Fio]:
         cursor = self._conexao.execute(
             """
@@ -126,15 +135,44 @@ class Armazenamento:
             """,
             (despejo_id,),
         )
-        return [
-            Fio(
-                id=id_,
-                despejo_id=despejo_id_,
-                estado=EstadoFio[estado],
-                criado_em=datetime.fromisoformat(criado_em),
-            )
-            for id_, despejo_id_, estado, criado_em in cursor.fetchall()
-        ]
+        return [self._linha_para_fio(linha) for linha in cursor.fetchall()]
+
+    def mesa(self) -> list[Fio]:
+        cursor = self._conexao.execute(
+            """
+            SELECT id, despejo_id, estado, criado_em FROM fios
+              WHERE estado IN ('ESCOLHIDO', 'JOGADO')
+              ORDER BY CASE estado WHEN 'ESCOLHIDO' THEN 0 ELSE 1 END, criado_em, id
+            """
+        )
+        return [self._linha_para_fio(linha) for linha in cursor.fetchall()]
+
+    def guardados(self, desde: datetime | None = None) -> list[Fio]:
+        # "mais recente" = ultima transicao para GUARDADO pelo maior seq, nunca pelo horario.
+        # Fios sem transicao (dados anteriores ao historico) vao pro fim.
+        filtro = ""
+        parametros: tuple = ()
+        if desde is not None:
+            if desde.tzinfo is None:
+                raise ValueError("desde sem timezone: use datetime timezone-aware")
+            filtro = "AND t.instante >= ?"
+            parametros = (desde.astimezone(timezone.utc).isoformat(),)
+        cursor = self._conexao.execute(
+            f"""
+            SELECT f.id, f.despejo_id, f.estado, f.criado_em
+              FROM fios f
+              LEFT JOIN (
+                  SELECT fio_id, MAX(seq) AS seq FROM transicoes
+                   WHERE para = 'GUARDADO' GROUP BY fio_id
+              ) g ON g.fio_id = f.id
+              LEFT JOIN transicoes t ON t.seq = g.seq
+              WHERE f.estado = 'GUARDADO'
+              {filtro}
+              ORDER BY g.seq IS NULL, g.seq DESC, f.criado_em, f.id
+            """,
+            parametros,
+        )
+        return [self._linha_para_fio(linha) for linha in cursor.fetchall()]
 
     def atualizar_estado(self, fio: Fio, novo: EstadoFio) -> Fio:
         novo_fio = fio.transicionar(novo)
