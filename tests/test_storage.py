@@ -1118,3 +1118,103 @@ class TestAssuntos:
         de_novo = Armazenamento(caminho)
         assert [f.id for f in de_novo.buscar_fios(despejo_id)] == [fio_id]
         de_novo.fechar()
+
+
+class TestFiosDoAssunto:
+    def _despejo(self, armazenamento):
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        return despejo
+
+    def _fio(self, armazenamento, despejo, assunto=None, criado_em=None):
+        fio = Fio(despejo_id=despejo.id) if criado_em is None else Fio(
+            despejo_id=despejo.id, criado_em=criado_em
+        )
+        armazenamento.salvar_fio(fio)
+        if assunto is not None:
+            fio = armazenamento.marcar_assunto(fio, assunto)
+        return fio
+
+    def test_assunto_sem_fios(self):
+        armazenamento = Armazenamento(":memory:")
+        assert armazenamento.fios_do_assunto("chefe") == []
+        armazenamento.fechar()
+
+    def test_so_fios_do_assunto(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        do_chefe = self._fio(armazenamento, despejo, "chefe")
+        self._fio(armazenamento, despejo, "mãe")
+        self._fio(armazenamento, despejo)
+        assert armazenamento.fios_do_assunto("chefe") == [do_chefe]
+        armazenamento.fechar()
+
+    def test_despejos_diferentes_em_ordem_de_criacao(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo_a = self._despejo(armazenamento)
+        despejo_b = self._despejo(armazenamento)
+        base = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        terceiro = self._fio(armazenamento, despejo_a, "chefe", base + timedelta(hours=2))
+        primeiro = self._fio(armazenamento, despejo_b, "chefe", base)
+        segundo = self._fio(armazenamento, despejo_a, "chefe", base + timedelta(hours=1))
+        assert armazenamento.fios_do_assunto("chefe") == [primeiro, segundo, terceiro]
+        armazenamento.fechar()
+
+    def test_todos_os_estados(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        base = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        resolvido = _levar_a(
+            armazenamento, self._fio(armazenamento, despejo, "chefe", base), EstadoFio.RESOLVIDO
+        )
+        descartado = _levar_a(
+            armazenamento,
+            self._fio(armazenamento, despejo, "chefe", base + timedelta(hours=1)),
+            EstadoFio.DESCARTADO,
+        )
+        assert armazenamento.fios_do_assunto("chefe") == [resolvido, descartado]
+        armazenamento.fechar()
+
+    def test_grafias_diferentes_acham_o_mesmo(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        fio = self._fio(armazenamento, despejo, "Chefe")
+        assert armazenamento.fios_do_assunto("  chefe ") == [fio]
+        armazenamento.fechar()
+
+    def test_desde_filtra(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        self._fio(armazenamento, despejo, "chefe", datetime(2026, 1, 1, tzinfo=timezone.utc))
+        novo = self._fio(
+            armazenamento, despejo, "chefe", datetime(2026, 7, 1, tzinfo=timezone.utc)
+        )
+        desde = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        assert armazenamento.fios_do_assunto("chefe", desde=desde) == [novo]
+        assert len(armazenamento.fios_do_assunto("chefe")) == 2
+        armazenamento.fechar()
+
+    def test_desde_com_fuso_nao_utc(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = self._despejo(armazenamento)
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        self._fio(armazenamento, despejo, "chefe", base - timedelta(minutes=1))
+        self._fio(armazenamento, despejo, "chefe", base)
+        self._fio(armazenamento, despejo, "chefe", base + timedelta(hours=1))
+        em_utc = armazenamento.fios_do_assunto("chefe", desde=base)
+        desde = datetime(2026, 5, 31, 21, 0, tzinfo=MENOS_3)  # = 2026-06-01T00:00 UTC
+        assert armazenamento.fios_do_assunto("chefe", desde=desde) == em_utc
+        assert len(em_utc) == 2
+        armazenamento.fechar()
+
+    def test_desde_sem_timezone_falha(self):
+        armazenamento = Armazenamento(":memory:")
+        with pytest.raises(ValueError, match="timezone"):
+            armazenamento.fios_do_assunto("chefe", desde=datetime(2026, 1, 1))
+        armazenamento.fechar()
+
+    def test_texto_vazio_falha(self):
+        armazenamento = Armazenamento(":memory:")
+        with pytest.raises(ValueError):
+            armazenamento.fios_do_assunto("   ")
+        armazenamento.fechar()

@@ -195,6 +195,24 @@ class Armazenamento:
         )
         return [self._linha_para_fio(linha) for linha in cursor.fetchall()]
 
+    def fios_do_assunto(self, texto: str, desde: datetime | None = None) -> list[Fio]:
+        chave = normalizar_assunto(texto)
+        valor = None
+        if desde is not None:
+            if desde.tzinfo is None:
+                raise ValueError("desde sem timezone: use datetime timezone-aware")
+            valor = desde.astimezone(timezone.utc).isoformat()
+        cursor = self._conexao.execute(
+            """
+            SELECT id, despejo_id, estado, criado_em, assunto_chave FROM fios
+              WHERE assunto_chave = ?
+                AND (? IS NULL OR criado_em >= ?)
+              ORDER BY criado_em, id
+            """,
+            (chave, valor, valor),
+        )
+        return [self._linha_para_fio(linha) for linha in cursor.fetchall()]
+
     def atualizar_estado(self, fio: Fio, novo: EstadoFio) -> Fio:
         novo_fio = fio.transicionar(novo)
         try:
