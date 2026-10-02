@@ -96,6 +96,23 @@ class TestTransicoes:
         assert issubclass(TransicaoInvalida, ValueError)
 
 
+class TestAssuntoNoFio:
+    def test_padrao_sem_assunto(self):
+        assert Fio(despejo_id=str(uuid.uuid4())).assunto_chave is None
+
+    def test_chave_normalizada_aceita(self):
+        fio = Fio(despejo_id=str(uuid.uuid4()), assunto_chave="a saída do chefe")
+        assert fio.assunto_chave == "a saída do chefe"
+
+    def test_chave_nao_normalizada_falha(self):
+        with pytest.raises(ValueError):
+            Fio(despejo_id=str(uuid.uuid4()), assunto_chave="Chefe")
+
+    def test_transicionar_preserva_assunto(self):
+        fio = Fio(despejo_id=str(uuid.uuid4()), assunto_chave="chefe")
+        assert fio.transicionar(EstadoFio.ESCOLHIDO).assunto_chave == "chefe"
+
+
 class TestTransicao:
     def test_nascimento_aceito(self):
         t = Transicao(

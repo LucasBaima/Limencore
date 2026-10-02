@@ -981,3 +981,140 @@ class TestGuardados:
         desde = datetime(2020, 1, 1, tzinfo=timezone.utc)
         assert [f.id for f in armazenamento.guardados(desde=desde)] == [b.id]
         armazenamento.fechar()
+
+
+class TestAssuntos:
+    def _fio_salvo(self, armazenamento):
+        despejo = Despejo(conteudo="pensamento")
+        armazenamento.salvar(despejo)
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_fio(fio)
+        return fio
+
+    def test_tabela_assuntos_existe(self):
+        armazenamento = Armazenamento(":memory:")
+        cursor = armazenamento._conexao.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='assuntos'"
+        )
+        assert cursor.fetchone() is not None
+        armazenamento.fechar()
+
+    def test_primeira_grafia_vence(self):
+        armazenamento = Armazenamento(":memory:")
+        primeiro = armazenamento.registrar_assunto("A Saída do Chefe")
+        segundo = armazenamento.registrar_assunto("a  saída do CHEFE")
+        assert primeiro == segundo
+        assert segundo.rotulo == "A Saída do Chefe"
+        (total,) = armazenamento._conexao.execute("SELECT COUNT(*) FROM assuntos").fetchone()
+        assert total == 1
+        armazenamento.fechar()
+
+    def test_marcar_persiste(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = self._fio_salvo(armazenamento)
+        retorno = armazenamento.marcar_assunto(fio, "A Saída do Chefe")
+        assert retorno.assunto_chave == "a saída do chefe"
+        [salvo] = armazenamento.buscar_fios(fio.despejo_id)
+        assert salvo.assunto_chave == "a saída do chefe"
+        assert salvo == retorno
+        armazenamento.fechar()
+
+    def test_grafias_diferentes_mesmo_assunto(self):
+        armazenamento = Armazenamento(":memory:")
+        fio_a = armazenamento.marcar_assunto(self._fio_salvo(armazenamento), "Chefe")
+        fio_b = armazenamento.marcar_assunto(self._fio_salvo(armazenamento), "chefe ")
+        assert fio_a.assunto_chave == fio_b.assunto_chave == "chefe"
+        armazenamento.fechar()
+
+    def test_remarcar_troca(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = self._fio_salvo(armazenamento)
+        fio = armazenamento.marcar_assunto(fio, "chefe")
+        fio = armazenamento.marcar_assunto(fio, "mãe")
+        [salvo] = armazenamento.buscar_fios(fio.despejo_id)
+        assert salvo.assunto_chave == "mãe"
+        armazenamento.fechar()
+
+    def test_marcar_nao_muda_estado_nem_historico(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = self._fio_salvo(armazenamento)
+        armazenamento.marcar_assunto(fio, "chefe")
+        [salvo] = armazenamento.buscar_fios(fio.despejo_id)
+        assert salvo.estado is EstadoFio.JOGADO
+        assert len(armazenamento.historico(fio.id)) == 1
+        armazenamento.fechar()
+
+    def test_marcar_fio_inexistente_desfaz(self):
+        armazenamento = Armazenamento(":memory:")
+        nunca_salvo = Fio(despejo_id=str(uuid.uuid4()))
+        with pytest.raises(ValueError, match="nao encontrado"):
+            armazenamento.marcar_assunto(nunca_salvo, "chefe")
+        assert armazenamento.buscar_assunto("chefe") is None
+        (total,) = armazenamento._conexao.execute("SELECT COUNT(*) FROM assuntos").fetchone()
+        assert total == 0
+        armazenamento.fechar()
+
+    def test_buscar_assunto_inexistente(self):
+        armazenamento = Armazenamento(":memory:")
+        assert armazenamento.buscar_assunto("chefe") is None
+        armazenamento.fechar()
+
+    def test_mesa_e_guardados_trazem_assunto(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = armazenamento.marcar_assunto(self._fio_salvo(armazenamento), "Chefe")
+        [na_mesa] = armazenamento.mesa()
+        assert na_mesa.assunto_chave == "chefe"
+        fio = armazenamento.atualizar_estado(fio, EstadoFio.GUARDADO)
+        [guardado] = armazenamento.guardados()
+        assert guardado.assunto_chave == "chefe"
+        assert guardado == fio
+        armazenamento.fechar()
+
+    def test_migracao_coluna_assunto(self, tmp_path):
+        caminho = str(tmp_path / "antigo.db")
+        despejo_id = str(uuid.uuid4())
+        fio_id = str(uuid.uuid4())
+        conexao = sqlite3.connect(caminho)
+        conexao.execute(
+            """
+            CREATE TABLE despejos (
+                id TEXT PRIMARY KEY,
+                conteudo TEXT NOT NULL,
+                instante TEXT NOT NULL
+            )
+            """
+        )
+        conexao.execute(
+            """
+            CREATE TABLE fios (
+                id TEXT PRIMARY KEY,
+                despejo_id TEXT NOT NULL REFERENCES despejos(id),
+                estado TEXT NOT NULL,
+                criado_em TEXT NOT NULL
+            )
+            """
+        )
+        conexao.execute(
+            "INSERT INTO despejos (id, conteudo, instante) VALUES (?, ?, ?)",
+            (despejo_id, "pensamento antigo", "2026-01-01T00:00:00+00:00"),
+        )
+        conexao.execute(
+            "INSERT INTO fios (id, despejo_id, estado, criado_em) VALUES (?, ?, ?, ?)",
+            (fio_id, despejo_id, "JOGADO", "2026-01-01T00:00:00+00:00"),
+        )
+        conexao.commit()
+        conexao.close()
+
+        armazenamento = Armazenamento(caminho)
+        colunas = {
+            linha[1] for linha in armazenamento._conexao.execute("PRAGMA table_info(fios)")
+        }
+        assert "assunto_chave" in colunas
+        [fio] = armazenamento.buscar_fios(despejo_id)
+        assert fio.id == fio_id
+        assert fio.assunto_chave is None
+        armazenamento.fechar()
+
+        de_novo = Armazenamento(caminho)
+        assert [f.id for f in de_novo.buscar_fios(despejo_id)] == [fio_id]
+        de_novo.fechar()

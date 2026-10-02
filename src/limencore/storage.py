@@ -1,10 +1,11 @@
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from limencore.ambient import AreaEnergia, ContextoAmbiente
+from limencore.assunto import Assunto, limpar_rotulo, normalizar_assunto
 from limencore.despejo import Despejo
 from limencore.fio import EstadoFio, Fio, Transicao
 
@@ -42,11 +43,21 @@ class Armazenamento:
         )
         self._conexao.execute(
             """
+            CREATE TABLE IF NOT EXISTS assuntos (
+                chave_norm TEXT PRIMARY KEY,
+                rotulo TEXT NOT NULL,
+                criado_em TEXT NOT NULL
+            )
+            """
+        )
+        self._conexao.execute(
+            """
             CREATE TABLE IF NOT EXISTS fios (
                 id TEXT PRIMARY KEY,
                 despejo_id TEXT NOT NULL REFERENCES despejos(id),
                 estado TEXT NOT NULL,
-                criado_em TEXT NOT NULL
+                criado_em TEXT NOT NULL,
+                assunto_chave TEXT REFERENCES assuntos(chave_norm)
             )
             """
         )
@@ -81,6 +92,13 @@ class Armazenamento:
             )
             """
         )
+        colunas_fios = {
+            linha[1] for linha in self._conexao.execute("PRAGMA table_info(fios)")
+        }
+        if "assunto_chave" not in colunas_fios:
+            self._conexao.execute(
+                "ALTER TABLE fios ADD COLUMN assunto_chave TEXT REFERENCES assuntos(chave_norm)"
+            )
         self._conexao.commit()
 
     def salvar(self, entry: Despejo):
@@ -102,13 +120,15 @@ class Armazenamento:
     def salvar_fio(self, fio: Fio) -> None:
         try:
             self._conexao.execute(
-                "INSERT INTO fios (id, despejo_id, estado, criado_em) VALUES (?, ?, ?, ?)",
+                "INSERT INTO fios (id, despejo_id, estado, criado_em, assunto_chave)"
+                " VALUES (?, ?, ?, ?, ?)",
                 # sempre UTC no banco: ordenacao e filtros comparam texto
                 (
                     fio.id,
                     fio.despejo_id,
                     fio.estado.name,
                     fio.criado_em.astimezone(timezone.utc).isoformat(),
+                    fio.assunto_chave,
                 ),
             )
             self._registrar_transicao(fio.id, None, fio.estado)
@@ -118,18 +138,19 @@ class Armazenamento:
             raise
 
     def _linha_para_fio(self, linha) -> Fio:
-        id_, despejo_id, estado, criado_em = linha
+        id_, despejo_id, estado, criado_em, assunto_chave = linha
         return Fio(
             id=id_,
             despejo_id=despejo_id,
             estado=EstadoFio[estado],
             criado_em=datetime.fromisoformat(criado_em),
+            assunto_chave=assunto_chave,
         )
 
     def buscar_fios(self, despejo_id: str) -> list[Fio]:
         cursor = self._conexao.execute(
             """
-            SELECT id, despejo_id, estado, criado_em FROM fios
+            SELECT id, despejo_id, estado, criado_em, assunto_chave FROM fios
               WHERE despejo_id = ?
               ORDER BY criado_em, id
             """,
@@ -140,7 +161,7 @@ class Armazenamento:
     def mesa(self) -> list[Fio]:
         cursor = self._conexao.execute(
             """
-            SELECT id, despejo_id, estado, criado_em FROM fios
+            SELECT id, despejo_id, estado, criado_em, assunto_chave FROM fios
               WHERE estado IN ('ESCOLHIDO', 'JOGADO')
               ORDER BY CASE estado WHEN 'ESCOLHIDO' THEN 0 ELSE 1 END, criado_em, id
             """
@@ -159,7 +180,7 @@ class Armazenamento:
             parametros = (desde.astimezone(timezone.utc).isoformat(),)
         cursor = self._conexao.execute(
             f"""
-            SELECT f.id, f.despejo_id, f.estado, f.criado_em
+            SELECT f.id, f.despejo_id, f.estado, f.criado_em, f.assunto_chave
               FROM fios f
               LEFT JOIN (
                   SELECT fio_id, MAX(seq) AS seq FROM transicoes
@@ -189,6 +210,43 @@ class Armazenamento:
             self._conexao.rollback()
             raise
         return novo_fio
+
+    def registrar_assunto(self, texto: str) -> Assunto:
+        # nao faz commit: quem chama decide
+        chave = normalizar_assunto(texto)
+        rotulo = limpar_rotulo(texto)
+        self._conexao.execute(
+            "INSERT OR IGNORE INTO assuntos (chave_norm, rotulo, criado_em) VALUES (?, ?, ?)",
+            # sempre UTC no banco: ordenacao e filtros comparam texto
+            (chave, rotulo, datetime.now(timezone.utc).isoformat()),
+        )
+        (rotulo_gravado,) = self._conexao.execute(
+            "SELECT rotulo FROM assuntos WHERE chave_norm = ?", (chave,)
+        ).fetchone()
+        return Assunto(chave, rotulo_gravado)
+
+    def buscar_assunto(self, chave: str) -> Assunto | None:
+        linha = self._conexao.execute(
+            "SELECT chave_norm, rotulo FROM assuntos WHERE chave_norm = ?", (chave,)
+        ).fetchone()
+        if linha is None:
+            return None
+        return Assunto(*linha)
+
+    def marcar_assunto(self, fio: Fio, texto: str) -> Fio:
+        try:
+            assunto = self.registrar_assunto(texto)
+            cursor = self._conexao.execute(
+                "UPDATE fios SET assunto_chave = ? WHERE id = ?",
+                (assunto.chave, fio.id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("fio nao encontrado")
+            self._conexao.commit()
+        except Exception:
+            self._conexao.rollback()
+            raise
+        return replace(fio, assunto_chave=assunto.chave)
 
     def historico(self, fio_id: str) -> list[Transicao]:
         cursor = self._conexao.execute(
