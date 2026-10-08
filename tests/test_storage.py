@@ -8,6 +8,7 @@ import pytest
 from limencore.ambient import ContextoAmbiente
 from limencore.despejo import Despejo
 from limencore.fio import EstadoFio, Fio, TransicaoInvalida
+from limencore.nota import TipoNota
 from limencore.storage import Armazenamento, Dia
 
 
@@ -1265,4 +1266,151 @@ class TestSalvarDespejoComFios:
         with pytest.raises(RuntimeError):
             armazenamento.salvar_despejo_com_fios(despejo, [Fio(despejo_id=despejo.id)])
         assert armazenamento.listar() == []
+        armazenamento.fechar()
+
+
+def _fio_salvo(armazenamento, estado=EstadoFio.JOGADO):
+    despejo = Despejo(conteudo="um despejo")
+    fio = Fio(despejo_id=despejo.id)
+    armazenamento.salvar_despejo_com_fios(despejo, [fio])
+    return _levar_a(armazenamento, fio, estado)
+
+
+class TestQuarto:
+    def test_escrever_em_escolhido_grava_nota(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        nota = armazenamento.escrever(fio, "primeira")
+        assert nota.tipo is TipoNota.NOTA
+        assert nota.texto == "primeira"
+        assert armazenamento.notas(fio.id) == [nota]
+        armazenamento.fechar()
+
+    def test_tres_notas_voltam_em_ordem(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        for texto in ["um", "dois", "tres"]:
+            armazenamento.escrever(fio, texto)
+        assert [n.texto for n in armazenamento.notas(fio.id)] == ["um", "dois", "tres"]
+        armazenamento.fechar()
+
+    @pytest.mark.parametrize("estado", [EstadoFio.JOGADO, EstadoFio.GUARDADO])
+    def test_escrever_fora_do_quarto_levanta(self, estado):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, estado)
+        with pytest.raises(ValueError, match="fora do quarto"):
+            armazenamento.escrever(fio, "nao entra")
+        assert armazenamento.notas(fio.id) == []
+        armazenamento.fechar()
+
+    def test_fio_desatualizado_levanta(self):
+        armazenamento = Armazenamento(":memory:")
+        escolhido = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        armazenamento.atualizar_estado(escolhido, EstadoFio.GUARDADO)
+        with pytest.raises(ValueError):
+            armazenamento.escrever(escolhido, "nao entra")
+        assert armazenamento.notas(escolhido.id) == []
+        armazenamento.fechar()
+
+    def test_texto_vazio_levanta(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        with pytest.raises(ValueError):
+            armazenamento.escrever(fio, "   ")
+        assert armazenamento.notas(fio.id) == []
+        armazenamento.fechar()
+
+    def test_escrever_nao_muda_estado_nem_historico(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        historico_antes = armazenamento.historico(fio.id)
+        armazenamento.escrever(fio, "so escrevo")
+        assert armazenamento.buscar_fios(fio.despejo_id)[0].estado is EstadoFio.ESCOLHIDO
+        assert armazenamento.historico(fio.id) == historico_antes
+        armazenamento.fechar()
+
+
+class TestPouso:
+    def test_pousar_resolve_e_grava_pouso(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        armazenamento.escrever(fio, "antes")
+        novo = armazenamento.pousar(fio, "  a frase exata\n")
+        assert novo.estado is EstadoFio.RESOLVIDO
+        assert armazenamento.buscar_fios(fio.despejo_id)[0].estado is EstadoFio.RESOLVIDO
+        ultima = armazenamento.historico(fio.id)[-1]
+        assert (ultima.de, ultima.para) == (EstadoFio.ESCOLHIDO, EstadoFio.RESOLVIDO)
+        nota = armazenamento.notas(fio.id)[-1]
+        assert nota.tipo is TipoNota.POUSO
+        assert nota.texto == "  a frase exata\n"
+        assert fio.id not in {f.id for f in armazenamento.mesa()}
+        armazenamento.fechar()
+
+    def test_pousar_jogado_levanta_transicao_invalida(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.JOGADO)
+        with pytest.raises(TransicaoInvalida):
+            armazenamento.pousar(fio, "cedo demais")
+        assert armazenamento.notas(fio.id) == []
+        armazenamento.fechar()
+
+    def test_pousar_sem_frase_resolve_sem_nota(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        novo = armazenamento.pousar(fio)
+        assert novo.estado is EstadoFio.RESOLVIDO
+        assert armazenamento.buscar_fios(fio.despejo_id)[0].estado is EstadoFio.RESOLVIDO
+        ultima = armazenamento.historico(fio.id)[-1]
+        assert (ultima.de, ultima.para) == (EstadoFio.ESCOLHIDO, EstadoFio.RESOLVIDO)
+        assert [n for n in armazenamento.notas(fio.id) if n.tipo is TipoNota.POUSO] == []
+        armazenamento.fechar()
+
+    def test_pousar_com_frase_so_espacos_resolve_sem_nota(self):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        novo = armazenamento.pousar(fio, "   ")
+        assert novo.estado is EstadoFio.RESOLVIDO
+        assert armazenamento.buscar_fios(fio.despejo_id)[0].estado is EstadoFio.RESOLVIDO
+        ultima = armazenamento.historico(fio.id)[-1]
+        assert (ultima.de, ultima.para) == (EstadoFio.ESCOLHIDO, EstadoFio.RESOLVIDO)
+        assert armazenamento.notas(fio.id) == []
+        armazenamento.fechar()
+
+    def test_fio_desatualizado_levanta(self):
+        armazenamento = Armazenamento(":memory:")
+        escolhido = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        armazenamento.atualizar_estado(escolhido, EstadoFio.GUARDADO)
+        historico_antes = armazenamento.historico(escolhido.id)
+        with pytest.raises(ValueError, match="desatualizado"):
+            armazenamento.pousar(escolhido, "tarde demais")
+        assert armazenamento.buscar_fios(escolhido.despejo_id)[0].estado is EstadoFio.GUARDADO
+        assert armazenamento.historico(escolhido.id) == historico_antes
+        assert armazenamento.notas(escolhido.id) == []
+        armazenamento.fechar()
+
+    def test_falha_na_nota_desfaz_a_transicao(self, monkeypatch):
+        armazenamento = Armazenamento(":memory:")
+        fio = _fio_salvo(armazenamento, EstadoFio.ESCOLHIDO)
+        historico_antes = armazenamento.historico(fio.id)
+
+        def falhar(fio_id, tipo, texto):
+            raise RuntimeError("falha simulada")
+
+        monkeypatch.setattr(armazenamento, "_inserir_nota", falhar)
+        with pytest.raises(RuntimeError):
+            armazenamento.pousar(fio, "nao fica")
+        assert armazenamento.buscar_fios(fio.despejo_id)[0].estado is EstadoFio.ESCOLHIDO
+        assert armazenamento.historico(fio.id) == historico_antes
+        armazenamento.fechar()
+
+    def test_pousar_um_nao_toca_o_outro(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="dois fios")
+        um, outro = Fio(despejo_id=despejo.id), Fio(despejo_id=despejo.id)
+        armazenamento.salvar_despejo_com_fios(despejo, [um, outro])
+        um = armazenamento.atualizar_estado(um, EstadoFio.ESCOLHIDO)
+        armazenamento.pousar(um, "este pousou")
+        estados = {f.id: f.estado for f in armazenamento.buscar_fios(despejo.id)}
+        assert estados[outro.id] is EstadoFio.JOGADO
+        assert len(armazenamento.historico(outro.id)) == 1
         armazenamento.fechar()

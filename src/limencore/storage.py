@@ -8,6 +8,7 @@ from limencore.ambient import AreaEnergia, ContextoAmbiente
 from limencore.assunto import Assunto, limpar_rotulo, normalizar_assunto
 from limencore.despejo import Despejo
 from limencore.fio import EstadoFio, Fio, Transicao
+from limencore.nota import Nota, TipoNota
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,17 @@ class Armazenamento:
                 fio_id TEXT NOT NULL REFERENCES fios(id),
                 de TEXT,
                 para TEXT NOT NULL,
+                instante TEXT NOT NULL
+            )
+            """
+        )
+        self._conexao.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notas (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                fio_id TEXT NOT NULL REFERENCES fios(id),
+                tipo TEXT NOT NULL,
+                texto TEXT NOT NULL,
                 instante TEXT NOT NULL
             )
             """
@@ -235,21 +247,78 @@ class Armazenamento:
         )
         return [self._linha_para_fio(linha) for linha in cursor.fetchall()]
 
-    def atualizar_estado(self, fio: Fio, novo: EstadoFio) -> Fio:
+    def _mudar_estado(self, fio: Fio, novo: EstadoFio) -> Fio:
+        # nao faz commit: quem chama decide
         novo_fio = fio.transicionar(novo)
+        cursor = self._conexao.execute(
+            "UPDATE fios SET estado = ? WHERE id = ? AND estado = ?",
+            (novo.name, fio.id, fio.estado.name),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("fio nao encontrado ou estado desatualizado")
+        self._registrar_transicao(fio.id, fio.estado, novo)
+        return novo_fio
+
+    def atualizar_estado(self, fio: Fio, novo: EstadoFio) -> Fio:
         try:
-            cursor = self._conexao.execute(
-                "UPDATE fios SET estado = ? WHERE id = ? AND estado = ?",
-                (novo.name, fio.id, fio.estado.name),
-            )
-            if cursor.rowcount == 0:
-                raise ValueError("fio nao encontrado ou estado desatualizado")
-            self._registrar_transicao(fio.id, fio.estado, novo)
+            novo_fio = self._mudar_estado(fio, novo)
             self._conexao.commit()
         except Exception:
             self._conexao.rollback()
             raise
         return novo_fio
+
+    def _inserir_nota(self, fio_id: str, tipo: TipoNota, texto: str) -> Nota:
+        # nao faz commit: quem chama decide
+        nota = Nota(fio_id=fio_id, tipo=tipo, texto=texto, instante=datetime.now(timezone.utc))
+        self._conexao.execute(
+            "INSERT INTO notas (fio_id, tipo, texto, instante) VALUES (?, ?, ?, ?)",
+            # sempre UTC no banco: ordenacao e filtros comparam texto
+            (nota.fio_id, nota.tipo.name, nota.texto, nota.instante.astimezone(timezone.utc).isoformat()),
+        )
+        return nota
+
+    def escrever(self, fio: Fio, texto: str) -> Nota:
+        linha = self._conexao.execute(
+            "SELECT estado FROM fios WHERE id = ?", (fio.id,)
+        ).fetchone()
+        if linha is None:
+            raise ValueError("fio nao encontrado")
+        if linha[0] != EstadoFio.ESCOLHIDO.name:
+            raise ValueError("fio fora do quarto")
+        try:
+            nota = self._inserir_nota(fio.id, TipoNota.NOTA, texto)
+            self._conexao.commit()
+        except Exception:
+            self._conexao.rollback()
+            raise
+        return nota
+
+    def notas(self, fio_id: str) -> list[Nota]:
+        cursor = self._conexao.execute(
+            "SELECT fio_id, tipo, texto, instante FROM notas WHERE fio_id = ? ORDER BY seq",
+            (fio_id,),
+        )
+        return [
+            Nota(
+                fio_id=fio_id_,
+                tipo=TipoNota[tipo],
+                texto=texto,
+                instante=datetime.fromisoformat(instante),
+            )
+            for fio_id_, tipo, texto, instante in cursor.fetchall()
+        ]
+
+    def pousar(self, fio: Fio, frase: str | None = None) -> Fio:
+        try:
+            novo = self._mudar_estado(fio, EstadoFio.RESOLVIDO)
+            if frase is not None and frase.strip():
+                self._inserir_nota(fio.id, TipoNota.POUSO, frase)
+            self._conexao.commit()
+        except Exception:
+            self._conexao.rollback()
+            raise
+        return novo
 
     def registrar_assunto(self, texto: str) -> Assunto:
         # nao faz commit: quem chama decide
