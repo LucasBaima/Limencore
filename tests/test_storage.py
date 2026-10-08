@@ -1218,3 +1218,51 @@ class TestFiosDoAssunto:
         with pytest.raises(ValueError):
             armazenamento.fios_do_assunto("   ")
         armazenamento.fechar()
+
+
+class TestSalvarDespejoComFios:
+    def test_grava_despejo_e_fios_com_nascimento(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="dois fios")
+        fios = [Fio(despejo_id=despejo.id), Fio(despejo_id=despejo.id)]
+        armazenamento.salvar_despejo_com_fios(despejo, fios)
+        assert [d.id for d in armazenamento.listar()] == [despejo.id]
+        assert {f.id for f in armazenamento.buscar_fios(despejo.id)} == {f.id for f in fios}
+        for fio in fios:
+            historico = armazenamento.historico(fio.id)
+            assert len(historico) == 1
+            assert historico[0].de is None
+            assert historico[0].para is EstadoFio.JOGADO
+        armazenamento.fechar()
+
+    def test_lista_vazia_levanta_e_nao_grava(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="sem fio")
+        with pytest.raises(ValueError, match="ao menos um fio"):
+            armazenamento.salvar_despejo_com_fios(despejo, [])
+        assert armazenamento.listar() == []
+        armazenamento.fechar()
+
+    def test_fio_de_outro_despejo_levanta_e_nao_grava(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="meu")
+        outro = Despejo(conteudo="outro")
+        fios = [Fio(despejo_id=despejo.id), Fio(despejo_id=outro.id)]
+        with pytest.raises(ValueError, match="fio de outro despejo"):
+            armazenamento.salvar_despejo_com_fios(despejo, fios)
+        assert armazenamento.listar() == []
+        assert armazenamento.buscar_fios(despejo.id) == []
+        armazenamento.fechar()
+
+    def test_falha_no_meio_desfaz_tudo(self, monkeypatch):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="vai falhar")
+
+        def falhar(fio):
+            raise RuntimeError("falha simulada")
+
+        monkeypatch.setattr(armazenamento, "_inserir_fio", falhar)
+        with pytest.raises(RuntimeError):
+            armazenamento.salvar_despejo_com_fios(despejo, [Fio(despejo_id=despejo.id)])
+        assert armazenamento.listar() == []
+        armazenamento.fechar()

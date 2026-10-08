@@ -101,12 +101,16 @@ class Armazenamento:
             )
         self._conexao.commit()
 
-    def salvar(self, entry: Despejo):
+    def _inserir_despejo(self, despejo: Despejo) -> None:
+        # nao faz commit: quem chama decide
         self._conexao.execute(
             "INSERT INTO despejos (id, conteudo, instante) VALUES (?, ?, ?)",
             # sempre UTC no banco: ordenacao e filtros comparam texto
-            (entry.id, entry.conteudo, entry.instante.astimezone(timezone.utc).isoformat()),
+            (despejo.id, despejo.conteudo, despejo.instante.astimezone(timezone.utc).isoformat()),
         )
+
+    def salvar(self, entry: Despejo):
+        self._inserir_despejo(entry)
         self._conexao.commit()
 
     def _registrar_transicao(self, fio_id: str, de: EstadoFio | None, para: EstadoFio) -> None:
@@ -117,21 +121,39 @@ class Armazenamento:
              datetime.now(timezone.utc).isoformat()),
         )
 
+    def _inserir_fio(self, fio: Fio) -> None:
+        # nao faz commit: quem chama decide
+        self._conexao.execute(
+            "INSERT INTO fios (id, despejo_id, estado, criado_em, assunto_chave)"
+            " VALUES (?, ?, ?, ?, ?)",
+            # sempre UTC no banco: ordenacao e filtros comparam texto
+            (
+                fio.id,
+                fio.despejo_id,
+                fio.estado.name,
+                fio.criado_em.astimezone(timezone.utc).isoformat(),
+                fio.assunto_chave,
+            ),
+        )
+        self._registrar_transicao(fio.id, None, fio.estado)
+
     def salvar_fio(self, fio: Fio) -> None:
         try:
-            self._conexao.execute(
-                "INSERT INTO fios (id, despejo_id, estado, criado_em, assunto_chave)"
-                " VALUES (?, ?, ?, ?, ?)",
-                # sempre UTC no banco: ordenacao e filtros comparam texto
-                (
-                    fio.id,
-                    fio.despejo_id,
-                    fio.estado.name,
-                    fio.criado_em.astimezone(timezone.utc).isoformat(),
-                    fio.assunto_chave,
-                ),
-            )
-            self._registrar_transicao(fio.id, None, fio.estado)
+            self._inserir_fio(fio)
+            self._conexao.commit()
+        except Exception:
+            self._conexao.rollback()
+            raise
+
+    def salvar_despejo_com_fios(self, despejo: Despejo, fios: list[Fio]) -> None:
+        if not fios:
+            raise ValueError("despejo precisa de ao menos um fio")
+        if any(fio.despejo_id != despejo.id for fio in fios):
+            raise ValueError("fio de outro despejo")
+        try:
+            self._inserir_despejo(despejo)
+            for fio in fios:
+                self._inserir_fio(fio)
             self._conexao.commit()
         except Exception:
             self._conexao.rollback()
