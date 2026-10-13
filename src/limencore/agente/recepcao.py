@@ -5,6 +5,7 @@ from limencore.despejo import Despejo
 from limencore.fio import Fio
 from limencore.storage import Armazenamento
 
+from .encaminhamento import DetectorDeEncaminhamento, DetectorPorExpressoes, Encaminhamento
 from .movimento import Forma, Movimento
 from .seletor import SeletorDeMovimento, SeletorGenerico
 
@@ -20,13 +21,25 @@ class Recepcao:
     """Recebe um despejo, salva na hora e devolve a jogada.
     Nao decide nada: a jogada vem do seletor plugado na costura."""
 
-    def __init__(self, armazenamento: Armazenamento, seletor: SeletorDeMovimento | None = None):
+    def __init__(
+        self,
+        armazenamento: Armazenamento,
+        seletor: SeletorDeMovimento | None = None,
+        detector: DetectorDeEncaminhamento | None = None,
+    ):
         self._armazenamento = armazenamento
         self._seletor = seletor if seletor is not None else SeletorGenerico()
+        self._detector = detector if detector is not None else DetectorPorExpressoes()
 
-    def receber(self, texto: str, instante: datetime | None = None) -> Recebido:
+    def receber(self, texto: str, instante: datetime | None = None) -> Recebido | Encaminhamento:
         despejo = Despejo(conteudo=texto) if instante is None else Despejo(conteudo=texto, instante=instante)
-        # H4: o portao de crise entra aqui, antes de qualquer outra coisa.
+        try:
+            encaminhar = self._detector.deve_encaminhar(despejo.conteudo)
+        except Exception:
+            encaminhar = True  # na duvida, o lado seguro
+        if encaminhar:
+            self._armazenamento.salvar(despejo)  # guardado, sem fio: fora do loop
+            return Encaminhamento(despejo=despejo)
         try:
             movimento = self._seletor.selecionar(despejo)
         except Exception:

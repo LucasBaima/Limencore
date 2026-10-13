@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from limencore.agente.encaminhamento import Encaminhamento
 from limencore.agente.movimento import Forma, Movimento
 from limencore.agente.recepcao import Recebido, Recepcao
 from limencore.fio import EstadoFio
@@ -91,3 +92,40 @@ def test_instante_explicito_e_respeitado(armazenamento):
     recebido = Recepcao(armazenamento).receber("com hora", instante=instante)
     assert recebido.despejo.instante == instante
     assert armazenamento.listar()[0].instante == instante
+
+
+class DetectorQueFalha:
+    def deve_encaminhar(self, texto):
+        raise RuntimeError("detector quebrou")
+
+
+class DetectorNunca:
+    def deve_encaminhar(self, texto):
+        return False
+
+
+def test_texto_que_dispara_devolve_encaminhamento_sem_fio(armazenamento):
+    resultado = Recepcao(armazenamento).receber("quero me matar")
+    assert isinstance(resultado, Encaminhamento)
+    assert [d.id for d in armazenamento.listar()] == [resultado.despejo.id]
+    assert armazenamento.buscar_fios(resultado.despejo.id) == []
+    assert armazenamento.mesa() == []
+
+
+def test_seletor_nao_e_chamado_quando_encaminha(armazenamento):
+    espiao = SeletorEspiao()
+    Recepcao(armazenamento, espiao).receber("quero me matar")
+    assert espiao.recebidos == []
+
+
+def test_detector_que_falha_encaminha(armazenamento):
+    resultado = Recepcao(armazenamento, detector=DetectorQueFalha()).receber("um pensamento")
+    assert isinstance(resultado, Encaminhamento)
+    assert armazenamento.buscar_fios(resultado.despejo.id) == []
+
+
+def test_detector_injetado_substitui_o_padrao(armazenamento):
+    resultado = Recepcao(armazenamento, detector=DetectorNunca()).receber("quero me matar")
+    assert isinstance(resultado, Recebido)
+    assert len(resultado.fios) == 1
+    assert len(armazenamento.buscar_fios(resultado.despejo.id)) == 1
