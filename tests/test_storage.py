@@ -1414,3 +1414,56 @@ class TestPouso:
         assert estados[outro.id] is EstadoFio.JOGADO
         assert len(armazenamento.historico(outro.id)) == 1
         armazenamento.fechar()
+
+
+class TestReservados:
+    def test_guardar_e_listar(self):
+        armazenamento = Armazenamento(":memory:")
+        instante = datetime(2026, 1, 2, 10, 0, tzinfo=timezone.utc)
+        reservado = armazenamento.guardar_reservado("so pra mim", instante)
+        assert uuid.UUID(reservado.id).version == 4
+        assert armazenamento.listar_reservados() == [reservado]
+        armazenamento.fechar()
+
+    def test_listar_ordena_por_instante(self):
+        armazenamento = Armazenamento(":memory:")
+        tarde = armazenamento.guardar_reservado("depois", datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc))
+        cedo = armazenamento.guardar_reservado("antes", datetime(2026, 1, 2, 9, 0, tzinfo=timezone.utc))
+        assert armazenamento.listar_reservados() == [cedo, tarde]
+        armazenamento.fechar()
+
+    def test_texto_vazio_nao_grava(self):
+        armazenamento = Armazenamento(":memory:")
+        with pytest.raises(ValueError):
+            armazenamento.guardar_reservado("   ", datetime(2026, 1, 2, tzinfo=timezone.utc))
+        assert armazenamento.listar_reservados() == []
+        armazenamento.fechar()
+
+    def test_apagar_remove(self):
+        armazenamento = Armazenamento(":memory:")
+        reservado = armazenamento.guardar_reservado("vai sumir", datetime(2026, 1, 2, tzinfo=timezone.utc))
+        armazenamento.apagar_reservado(reservado.id)
+        assert armazenamento.listar_reservados() == []
+        armazenamento.fechar()
+
+    def test_apagar_inexistente_levanta(self):
+        armazenamento = Armazenamento(":memory:")
+        with pytest.raises(ValueError, match="reservado nao encontrado"):
+            armazenamento.apagar_reservado(str(uuid.uuid4()))
+        armazenamento.fechar()
+
+    def test_reservado_nao_aparece_no_resto(self):
+        armazenamento = Armazenamento(":memory:")
+        instante = datetime(2026, 1, 2, 10, 0, tzinfo=timezone.utc)
+        armazenamento.guardar_reservado("so pra mim", instante)
+        assert armazenamento.listar() == []
+        assert armazenamento.buscar_dia(date(2026, 1, 2), ZoneInfo("UTC")).despejos == []
+        assert armazenamento.mesa() == []
+        assert armazenamento.guardados() == []
+        armazenamento.fechar()
+
+    def test_secure_delete_ligado(self):
+        armazenamento = Armazenamento(":memory:")
+        (valor,) = armazenamento._conexao.execute("PRAGMA secure_delete").fetchone()
+        assert valor == 1
+        armazenamento.fechar()

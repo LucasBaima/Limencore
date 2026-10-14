@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import uuid
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -9,6 +10,7 @@ from limencore.assunto import Assunto, limpar_rotulo, normalizar_assunto
 from limencore.despejo import Despejo
 from limencore.fio import EstadoFio, Fio, Transicao
 from limencore.nota import Nota, TipoNota
+from limencore.reservado import Reservado
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,7 @@ class Armazenamento:
         self.caminho = caminho
         self._conexao = sqlite3.connect(caminho)
         self._conexao.execute("PRAGMA foreign_keys = ON")
+        self._conexao.execute("PRAGMA secure_delete = ON")
         self._inicializar()
 
     def _inicializar(self):
@@ -101,6 +104,15 @@ class Armazenamento:
             CREATE TABLE IF NOT EXISTS categorias (
                 chave_norm TEXT PRIMARY KEY,
                 rotulo     TEXT NOT NULL
+            )
+            """
+        )
+        self._conexao.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reservados (
+                id TEXT PRIMARY KEY,
+                texto TEXT NOT NULL,
+                instante TEXT NOT NULL
             )
             """
         )
@@ -371,6 +383,31 @@ class Armazenamento:
             )
             for fio_id_, de, para, instante in cursor.fetchall()
         ]
+
+    def guardar_reservado(self, texto: str, instante: datetime) -> Reservado:
+        reservado = Reservado(id=str(uuid.uuid4()), texto=texto, instante=instante)
+        self._conexao.execute(
+            "INSERT INTO reservados (id, texto, instante) VALUES (?, ?, ?)",
+            # sempre UTC no banco: ordenacao e filtros comparam texto
+            (reservado.id, reservado.texto, reservado.instante.astimezone(timezone.utc).isoformat()),
+        )
+        self._conexao.commit()
+        return reservado
+
+    def listar_reservados(self) -> list[Reservado]:
+        cursor = self._conexao.execute(
+            "SELECT id, texto, instante FROM reservados ORDER BY instante, id"
+        )
+        return [
+            Reservado(id=id_, texto=texto, instante=datetime.fromisoformat(instante))
+            for id_, texto, instante in cursor.fetchall()
+        ]
+
+    def apagar_reservado(self, id_: str) -> None:
+        cursor = self._conexao.execute("DELETE FROM reservados WHERE id = ?", (id_,))
+        if cursor.rowcount == 0:
+            raise ValueError("reservado nao encontrado")
+        self._conexao.commit()
 
     def _canonicalizar_energia(self, energia: dict[str, int]) -> dict[str, int]:
         defaults = {area.value for area in AreaEnergia}

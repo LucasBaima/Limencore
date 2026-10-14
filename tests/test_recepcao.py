@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from limencore.agente.encaminhamento import Encaminhamento
+from limencore.agente.encaminhamento import Conferencia, Encaminhamento, Passagem, RegistroDaSessao
 from limencore.agente.movimento import Forma, Movimento
 from limencore.agente.recepcao import Recebido, Recepcao
 from limencore.fio import EstadoFio
@@ -95,33 +95,90 @@ def test_instante_explicito_e_respeitado(armazenamento):
 
 
 class DetectorQueFalha:
-    def deve_encaminhar(self, texto):
+    def avaliar(self, texto):
         raise RuntimeError("detector quebrou")
 
 
 class DetectorNunca:
-    def deve_encaminhar(self, texto):
-        return False
+    def avaliar(self, texto):
+        return Passagem.SEGUIR
 
 
-def test_texto_que_dispara_devolve_encaminhamento_sem_fio(armazenamento):
-    resultado = Recepcao(armazenamento).receber("quero me matar")
-    assert isinstance(resultado, Encaminhamento)
-    assert [d.id for d in armazenamento.listar()] == [resultado.despejo.id]
-    assert armazenamento.buscar_fios(resultado.despejo.id) == []
+def _nada_salvo(armazenamento):
+    assert armazenamento.listar() == []
     assert armazenamento.mesa() == []
+    (n,) = armazenamento._conexao.execute("SELECT COUNT(*) FROM fios").fetchone()
+    assert n == 0
 
 
-def test_seletor_nao_e_chamado_quando_encaminha(armazenamento):
+def test_explicito_encaminha_sem_salvar(armazenamento):
     espiao = SeletorEspiao()
-    Recepcao(armazenamento, espiao).receber("quero me matar")
+    resultado = Recepcao(armazenamento, espiao).receber("quero me matar")
+    assert isinstance(resultado, Encaminhamento)
+    assert resultado.oferece_retorno is True
+    assert resultado.texto == "quero me matar"
+    _nada_salvo(armazenamento)
     assert espiao.recebidos == []
+
+
+def test_ambiguo_confere_sem_salvar(armazenamento):
+    espiao = SeletorEspiao()
+    instante = datetime(2026, 1, 2, 10, 0, tzinfo=timezone.utc)
+    resultado = Recepcao(armazenamento, espiao).receber("quero sumir", instante=instante)
+    assert resultado == Conferencia(texto="quero sumir", instante=instante)
+    _nada_salvo(armazenamento)
+    assert espiao.recebidos == []
+
+
+def test_confirmar_falso_segue_com_texto_e_instante_originais(armazenamento):
+    recepcao = Recepcao(armazenamento)
+    instante = datetime(2026, 1, 2, 10, 0, tzinfo=timezone.utc)
+    conferencia = recepcao.receber("esse prazo vai me matar", instante=instante)
+    resultado = recepcao.confirmar(conferencia, False)
+    assert isinstance(resultado, Recebido)
+    (despejo,) = armazenamento.listar()
+    assert despejo.conteudo == "esse prazo vai me matar"
+    assert despejo.instante == instante
+    assert len(armazenamento.buscar_fios(despejo.id)) == 1
+
+
+def test_confirmar_falso_nao_roda_o_detector_de_novo(armazenamento):
+    recepcao = Recepcao(armazenamento, detector=DetectorQueFalha())
+    conferencia = Conferencia(texto="quero sumir", instante=datetime.now(timezone.utc))
+    assert isinstance(recepcao.confirmar(conferencia, False), Recebido)
+
+
+def test_confirmar_verdadeiro_encaminha_sem_salvar(armazenamento):
+    recepcao = Recepcao(armazenamento)
+    conferencia = recepcao.receber("quero sumir")
+    resultado = recepcao.confirmar(conferencia, True)
+    assert isinstance(resultado, Encaminhamento)
+    assert resultado.oferece_retorno is True
+    _nada_salvo(armazenamento)
+
+
+def test_reincidencia_encaminha_sem_retorno(armazenamento):
+    sessao = RegistroDaSessao()
+    recepcao = Recepcao(armazenamento, sessao=sessao)
+    primeiro = recepcao.receber("quero me matar", instante=datetime(2026, 1, 2, 10, 0, tzinfo=timezone.utc))
+    segundo = recepcao.receber("quero sumir", instante=datetime(2026, 1, 2, 10, 10, tzinfo=timezone.utc))
+    assert isinstance(primeiro, Encaminhamento) and primeiro.oferece_retorno is True
+    assert isinstance(segundo, Encaminhamento)
+    assert segundo.oferece_retorno is False
+    _nada_salvo(armazenamento)
+
+
+def test_reincidencia_nao_afeta_texto_neutro(armazenamento):
+    recepcao = Recepcao(armazenamento)
+    recepcao.receber("quero me matar", instante=datetime(2026, 1, 2, 10, 0, tzinfo=timezone.utc))
+    resultado = recepcao.receber("o prazo", instante=datetime(2026, 1, 2, 10, 5, tzinfo=timezone.utc))
+    assert isinstance(resultado, Recebido)
 
 
 def test_detector_que_falha_encaminha(armazenamento):
     resultado = Recepcao(armazenamento, detector=DetectorQueFalha()).receber("um pensamento")
     assert isinstance(resultado, Encaminhamento)
-    assert armazenamento.buscar_fios(resultado.despejo.id) == []
+    _nada_salvo(armazenamento)
 
 
 def test_detector_injetado_substitui_o_padrao(armazenamento):
