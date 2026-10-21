@@ -74,7 +74,16 @@ class Recepcao:
         except Exception:
             # fallback: nunca perder o despejo por falha do seletor
             movimento = Movimento(forma=Forma.UM_SO, alvos=(despejo.id,))
-        # caso simples: sempre um fio com o despejo inteiro, qualquer que seja a forma
-        fio = Fio(despejo_id=despejo.id)
-        self._armazenamento.salvar_despejo_com_fios(despejo, [fio])
-        return Recebido(despejo=despejo, movimento=movimento, fios=(fio,))
+        fios = self._fios_do_corte(despejo, movimento)
+        self._armazenamento.salvar_despejo_com_fios(despejo, list(fios))
+        return Recebido(despejo=despejo, movimento=movimento, fios=fios)
+
+    def _fios_do_corte(self, despejo: Despejo, movimento: Movimento) -> tuple[Fio, ...]:
+        # sem corte, ou corte que nao cabe no texto: um fio com o despejo inteiro
+        if movimento.corte is None:
+            return (Fio(despejo_id=despejo.id),)
+        try:
+            movimento.corte.validar_para(despejo.conteudo)
+        except ValueError:
+            return (Fio(despejo_id=despejo.id),)
+        return tuple(Fio(despejo_id=despejo.id, trechos=g.trechos) for g in movimento.corte.fios)

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from limencore.corte import Trecho
 from limencore.fio import EstadoFio, Fio, Transicao, TransicaoInvalida
 
 
@@ -153,3 +154,17 @@ class TestTransicao:
         }
         with pytest.raises(ValueError):
             Transicao(**{**base, **campos})
+
+
+class TestTrechosNoFio:
+    def test_padrao_e_vazio(self):
+        assert Fio(despejo_id=str(uuid.uuid4())).trechos == ()
+
+    def test_aceita_trechos(self):
+        trechos = (Trecho(0, 3), Trecho(5, 9))
+        assert Fio(despejo_id=str(uuid.uuid4()), trechos=trechos).trechos == trechos
+
+    @pytest.mark.parametrize("trechos", [[Trecho(0, 3)], ((0, 3),)])
+    def test_trechos_invalidos(self, trechos):
+        with pytest.raises(ValueError):
+            Fio(despejo_id=str(uuid.uuid4()), trechos=trechos)

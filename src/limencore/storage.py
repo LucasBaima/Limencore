@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from limencore.ambient import AreaEnergia, ContextoAmbiente
 from limencore.assunto import Assunto, limpar_rotulo, normalizar_assunto
+from limencore.corte import Trecho
 from limencore.despejo import Despejo
 from limencore.fio import EstadoFio, Fio, Transicao
 from limencore.nota import Nota, TipoNota
@@ -62,6 +63,17 @@ class Armazenamento:
                 estado TEXT NOT NULL,
                 criado_em TEXT NOT NULL,
                 assunto_chave TEXT REFERENCES assuntos(chave_norm)
+            )
+            """
+        )
+        self._conexao.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trechos_fio (
+                fio_id TEXT NOT NULL REFERENCES fios(id),
+                ordem INTEGER NOT NULL,
+                inicio INTEGER NOT NULL,
+                fim INTEGER NOT NULL,
+                PRIMARY KEY (fio_id, ordem)
             )
             """
         )
@@ -159,6 +171,10 @@ class Armazenamento:
                 fio.assunto_chave,
             ),
         )
+        self._conexao.executemany(
+            "INSERT INTO trechos_fio (fio_id, ordem, inicio, fim) VALUES (?, ?, ?, ?)",
+            [(fio.id, ordem, t.inicio, t.fim) for ordem, t in enumerate(fio.trechos)],
+        )
         self._registrar_transicao(fio.id, None, fio.estado)
 
     def salvar_fio(self, fio: Fio) -> None:
@@ -191,7 +207,15 @@ class Armazenamento:
             estado=EstadoFio[estado],
             criado_em=datetime.fromisoformat(criado_em),
             assunto_chave=assunto_chave,
+            trechos=self._trechos_do_fio(id_),
         )
+
+    def _trechos_do_fio(self, fio_id: str) -> tuple[Trecho, ...]:
+        cursor = self._conexao.execute(
+            "SELECT inicio, fim FROM trechos_fio WHERE fio_id = ? ORDER BY ordem",
+            (fio_id,),
+        )
+        return tuple(Trecho(inicio, fim) for inicio, fim in cursor.fetchall())
 
     def buscar_fios(self, despejo_id: str) -> list[Fio]:
         cursor = self._conexao.execute(

@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from limencore.ambient import ContextoAmbiente
+from limencore.corte import Trecho
 from limencore.despejo import Despejo
 from limencore.fio import EstadoFio, Fio, TransicaoInvalida
 from limencore.nota import TipoNota
@@ -1466,4 +1467,74 @@ class TestReservados:
         armazenamento = Armazenamento(":memory:")
         (valor,) = armazenamento._conexao.execute("PRAGMA secure_delete").fetchone()
         assert valor == 1
+        armazenamento.fechar()
+
+
+class TestTrechosFio:
+    def test_tabela_trechos_fio_existe(self):
+        armazenamento = Armazenamento(":memory:")
+        cursor = armazenamento._conexao.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='trechos_fio'"
+        )
+        assert cursor.fetchone() is not None
+        armazenamento.fechar()
+
+    def test_inicializar_duas_vezes_nao_falha(self, tmp_path):
+        caminho = str(tmp_path / "t.db")
+        Armazenamento(caminho).fechar()
+        Armazenamento(caminho).fechar()
+
+    def test_ida_e_volta_dos_trechos_na_ordem(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="um pedaco, outro pedaco, mais um")
+        ligado = Fio(despejo_id=despejo.id, trechos=(Trecho(0, 9), Trecho(25, 32)))
+        sozinho = Fio(despejo_id=despejo.id, trechos=(Trecho(11, 23),))
+        armazenamento.salvar_despejo_com_fios(despejo, [ligado, sozinho])
+        por_id = {f.id: f for f in armazenamento.buscar_fios(despejo.id)}
+        assert por_id[ligado.id].trechos == (Trecho(0, 9), Trecho(25, 32))
+        assert por_id[sozinho.id].trechos == (Trecho(11, 23),)
+        assert {f.id: f.trechos for f in armazenamento.mesa()} == {
+            ligado.id: ligado.trechos,
+            sozinho.id: sozinho.trechos,
+        }
+        armazenamento.fechar()
+
+    def test_fio_sem_trechos_le_tupla_vazia(self):
+        armazenamento = Armazenamento(":memory:")
+        despejo = Despejo(conteudo="inteiro")
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_despejo_com_fios(despejo, [fio])
+        (lido,) = armazenamento.buscar_fios(despejo.id)
+        assert lido.trechos == ()
+        (n,) = armazenamento._conexao.execute("SELECT COUNT(*) FROM trechos_fio").fetchone()
+        assert n == 0
+        armazenamento.fechar()
+
+    def test_despejo_antigo_sem_tabela_de_trechos_le_vazio(self, tmp_path):
+        caminho = str(tmp_path / "antigo.db")
+        armazenamento = Armazenamento(caminho)
+        despejo = Despejo(conteudo="antigo")
+        fio = Fio(despejo_id=despejo.id)
+        armazenamento.salvar_despejo_com_fios(despejo, [fio])
+        armazenamento._conexao.execute("DROP TABLE trechos_fio")
+        armazenamento._conexao.commit()
+        armazenamento.fechar()
+
+        reaberto = Armazenamento(caminho)
+        (lido,) = reaberto.buscar_fios(despejo.id)
+        assert lido.id == fio.id
+        assert lido.trechos == ()
+        reaberto.fechar()
+
+    def test_falha_nos_trechos_desfaz_tudo(self):
+        armazenamento = Armazenamento(":memory:")
+        armazenamento._conexao.execute(
+            "CREATE TRIGGER falha BEFORE INSERT ON trechos_fio BEGIN SELECT RAISE(ABORT, 'falha'); END"
+        )
+        despejo = Despejo(conteudo="vai falhar")
+        fio = Fio(despejo_id=despejo.id, trechos=(Trecho(0, 3),))
+        with pytest.raises(sqlite3.IntegrityError):
+            armazenamento.salvar_despejo_com_fios(despejo, [fio])
+        assert armazenamento.listar() == []
+        assert armazenamento.buscar_fios(despejo.id) == []
         armazenamento.fechar()

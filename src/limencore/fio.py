@@ -4,6 +4,7 @@ from enum import Enum
 import uuid
 
 from limencore.assunto import normalizar_assunto
+from limencore.corte import Trecho
 
 
 class EstadoFio(Enum):
@@ -43,6 +44,7 @@ class Fio:  # Fio = unidade de um despejo que carrega estado (a "thread" do proc
     criado_em: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     assunto_chave: str | None = None  #Cada um nasce sem assunto
+    trechos: tuple[Trecho, ...] = ()  # vazio = o despejo inteiro
 
     def __post_init__(self):
         _validar_uuid4(self.despejo_id, "despejo_id")
@@ -53,6 +55,8 @@ class Fio:  # Fio = unidade de um despejo que carrega estado (a "thread" do proc
             raise ValueError("criado_em sem timezone: use datetime timezone-aware (UTC)")
         if self.assunto_chave is not None and normalizar_assunto(self.assunto_chave) != self.assunto_chave:
             raise ValueError(f"assunto_chave nao normalizada: {self.assunto_chave!r}")
+        if not isinstance(self.trechos, tuple) or any(not isinstance(t, Trecho) for t in self.trechos):
+            raise ValueError(f"trechos invalidos: esperado tuple de Trecho, veio {self.trechos!r}")
 
     def transicionar(self, novo: EstadoFio) -> "Fio":
         if novo not in TRANSICOES[self.estado]:

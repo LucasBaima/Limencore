@@ -5,6 +5,7 @@ import pytest
 from limencore.agente.encaminhamento import Conferencia, Encaminhamento, Passagem, RegistroDaSessao
 from limencore.agente.movimento import Forma, Movimento
 from limencore.agente.recepcao import Recebido, Recepcao
+from limencore.corte import Corte, FioPlanejado, Trecho, recortar
 from limencore.fio import EstadoFio
 from limencore.storage import Armazenamento
 
@@ -186,3 +187,54 @@ def test_detector_injetado_substitui_o_padrao(armazenamento):
     assert isinstance(resultado, Recebido)
     assert len(resultado.fios) == 1
     assert len(armazenamento.buscar_fios(resultado.despejo.id)) == 1
+
+
+class SeletorComCorte:
+    def __init__(self, forma, fios):
+        self.forma = forma
+        self.fios = fios
+
+    def selecionar(self, entry):
+        corte = Corte(fios=tuple(FioPlanejado(trechos=tuple(Trecho(i, f) for i, f in g)) for g in self.fios))
+        return Movimento(forma=self.forma, alvos=(entry.id,), corte=corte)
+
+
+def test_corte_de_tres_fios_planejados_cria_tres_fios(armazenamento):
+    texto = "primeiro. segundo. terceiro."
+    seletor = SeletorComCorte(Forma.DIVIDIR, [[(0, 9)], [(10, 18)], [(19, 28)]])
+    recebido = Recepcao(armazenamento, seletor).receber(texto)
+    assert [f.trechos for f in recebido.fios] == [
+        (Trecho(0, 9),),
+        (Trecho(10, 18),),
+        (Trecho(19, 28),),
+    ]
+    assert [recortar(texto, f.trechos[0]) for f in recebido.fios] == ["primeiro.", "segundo.", "terceiro."]
+    salvos = {f.id: f.trechos for f in armazenamento.buscar_fios(recebido.despejo.id)}
+    assert salvos == {f.id: f.trechos for f in recebido.fios}
+
+
+def test_corte_de_um_fio_planejado_com_dois_trechos_cria_um_fio(armazenamento):
+    texto = "isto, aquilo, e isto de novo"
+    seletor = SeletorComCorte(Forma.LIGAR, [[(0, 4), (16, 28)]])
+    recebido = Recepcao(armazenamento, seletor).receber(texto)
+    (fio,) = recebido.fios
+    assert fio.trechos == (Trecho(0, 4), Trecho(16, 28))
+    (salvo,) = armazenamento.buscar_fios(recebido.despejo.id)
+    assert salvo.trechos == fio.trechos
+
+
+@pytest.mark.parametrize("fios", [[[(0, 3)], [(4, 99)]], [[(0, 3)], [(3, 6)]]])
+def test_corte_invalido_cai_em_um_fio_e_salva(armazenamento, fios):
+    recebido = Recepcao(armazenamento, SeletorComCorte(Forma.DIVIDIR, fios)).receber("abc   def")
+    (fio,) = recebido.fios
+    assert fio.trechos == ()
+    assert [d.id for d in armazenamento.listar()] == [recebido.despejo.id]
+    (salvo,) = armazenamento.buscar_fios(recebido.despejo.id)
+    assert salvo.id == fio.id and salvo.trechos == ()
+
+
+def test_seletor_sem_corte_continua_um_fio_inteiro(armazenamento):
+    recebido = Recepcao(armazenamento, SeletorDividir()).receber("varios misturados")
+    (fio,) = recebido.fios
+    assert fio.trechos == ()
+    assert armazenamento.buscar_fios(recebido.despejo.id)[0].trechos == ()
