@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from limencore.agente.encaminhamento import Conferencia, Encaminhamento, RegistroDaSessao
-from limencore.agente.quarto import Quarto
+from limencore.agente.quarto import Escrito, Quarto
 from limencore.agente.recepcao import Recepcao
 from limencore.fio import EstadoFio
 from limencore.nota import Nota, TipoNota
@@ -30,7 +30,8 @@ def fio(armazenamento):
 
 def test_escrever_normal_devolve_nota(armazenamento, fio):
     resultado = Quarto(armazenamento).escrever(fio, "falta a parte dos numeros")
-    assert isinstance(resultado, Nota)
+    assert isinstance(resultado, Escrito)
+    assert isinstance(resultado.nota, Nota)
     notas = armazenamento.notas(fio.id)
     assert len(notas) == 1
     assert notas[0].tipo is TipoNota.NOTA
@@ -57,7 +58,8 @@ def test_confirmar_falso_grava_a_nota(armazenamento, fio):
     quarto = Quarto(armazenamento)
     conferencia = quarto.escrever(fio, "nao aguento mais esse relatorio")
     resultado = quarto.confirmar(fio, conferencia, False)
-    assert isinstance(resultado, Nota)
+    assert isinstance(resultado, Escrito)
+    assert isinstance(resultado.nota, Nota)
     assert [n.texto for n in armazenamento.notas(fio.id)] == ["nao aguento mais esse relatorio"]
 
 

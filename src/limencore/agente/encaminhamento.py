@@ -126,10 +126,18 @@ class Encaminhamento:  # a saida do sistema: nada foi salvo
     oferece_retorno: bool  # False = sem o "nao era isso"
 
 
+ORIGENS_DA_CONFERENCIA = ("escrever", "pousar")
+
+
 @dataclass(frozen=True)
 class Conferencia:  # a pergunta antes da porta: nada foi salvo
     texto: str
     instante: datetime
+    origem: str | None = None  # no quarto: "escrever" ou "pousar"; None = entrada
+
+    def __post_init__(self):
+        if self.origem is not None and self.origem not in ORIGENS_DA_CONFERENCIA:
+            raise ValueError(f"origem invalida: esperado um de {ORIGENS_DA_CONFERENCIA}, veio {self.origem!r}")
 
 
 class RegistroDaSessao:

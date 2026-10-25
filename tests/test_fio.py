@@ -16,22 +16,25 @@ PERMITIDAS = {
     ("ESCOLHIDO", "RESOLVIDO"),
     ("ESCOLHIDO", "GUARDADO"),
     ("ESCOLHIDO", "DESCARTADO"),
+    ("JOGADO", "JUNTADO"),
+    ("ESCOLHIDO", "JUNTADO"),
     ("GUARDADO", "ESCOLHIDO"),
     ("GUARDADO", "DESCARTADO"),
 }
 
-NOMES = ["JOGADO", "ESCOLHIDO", "RESOLVIDO", "GUARDADO", "DESCARTADO"]
+NOMES = ["JOGADO", "ESCOLHIDO", "RESOLVIDO", "GUARDADO", "DESCARTADO", "JUNTADO"]
 PARES = [(origem, destino) for origem in NOMES for destino in NOMES]
 
 
 class TestEstadoFio:
-    def test_os_cinco_e_so_eles(self):
+    def test_os_seis_e_so_eles(self):
         assert {e.name for e in EstadoFio} == {
             "JOGADO",
             "ESCOLHIDO",
             "RESOLVIDO",
             "GUARDADO",
             "DESCARTADO",
+            "JUNTADO",
         }
 
 
@@ -75,8 +78,8 @@ class TestFioInvalido:
 
 
 class TestTransicoes:
-    def test_sao_25_pares(self):
-        assert len(PARES) == 25
+    def test_sao_36_pares(self):
+        assert len(PARES) == 36
 
     @pytest.mark.parametrize("origem,destino", PARES)
     def test_transicao(self, origem, destino):

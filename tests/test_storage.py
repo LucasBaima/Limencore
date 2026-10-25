@@ -848,18 +848,62 @@ class TestMesa:
         assert set(mesa) == {jogado, escolhido}
         armazenamento.fechar()
 
-    def test_escolhido_primeiro(self):
+    def _com_relogio(self):
+        instantes = [datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)]
+        armazenamento = Armazenamento(":memory:", relogio=lambda: instantes[0])
+
+        def andar(minutos):
+            instantes[0] += timedelta(minutes=minutos)
+
+        return armazenamento, andar
+
+    def test_tocado_por_ultimo_primeiro(self):
+        armazenamento, andar = self._com_relogio()
+        despejo = self._despejo(armazenamento)
+        base = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        a = self._fio(armazenamento, despejo, criado_em=base)
+        b = self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=1))
+        a = armazenamento.entrar(a)
+        andar(1)
+        b = armazenamento.entrar(b)
+        assert armazenamento.mesa() == [b, a]
+        andar(1)
+        a = armazenamento.entrar(a)
+        assert armazenamento.mesa() == [a, b]
+        armazenamento.fechar()
+
+    def test_nunca_tocados_no_fim_por_criacao(self):
+        armazenamento, _ = self._com_relogio()
+        despejo = self._despejo(armazenamento)
+        base = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        segundo = self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=2))
+        primeiro = self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=1))
+        tocado = armazenamento.entrar(self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=3)))
+        assert armazenamento.mesa() == [tocado, primeiro, segundo]
+        armazenamento.fechar()
+
+    def test_estado_nao_decide_a_ordem(self):
+        armazenamento, andar = self._com_relogio()
+        despejo = self._despejo(armazenamento)
+        base = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        escolhido = armazenamento.entrar(self._fio(armazenamento, despejo, criado_em=base))
+        jogado = self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=1))
+        andar(1)
+        jogado = armazenamento.entrar(jogado)
+        jogado = armazenamento.atualizar_estado(jogado, EstadoFio.JOGADO)
+        jogado = armazenamento._buscar_fio(jogado.id)
+        mesa = armazenamento.mesa()
+        assert [f.estado for f in mesa] == [EstadoFio.JOGADO, EstadoFio.ESCOLHIDO]
+        assert mesa == [jogado, escolhido]
+        armazenamento.fechar()
+
+    def test_escolhido_nunca_tocado_nao_passa_na_frente(self):
         armazenamento = Armazenamento(":memory:")
         despejo = self._despejo(armazenamento)
         base = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
-        self._fio(armazenamento, despejo, criado_em=base)
-        self._fio(armazenamento, despejo, criado_em=base + timedelta(hours=1))
-        escolhido = self._fio(
-            armazenamento, despejo, EstadoFio.ESCOLHIDO, criado_em=base + timedelta(hours=2)
-        )
-        mesa = armazenamento.mesa()
-        assert mesa[0] == escolhido
-        assert [f.estado for f in mesa[1:]] == [EstadoFio.JOGADO, EstadoFio.JOGADO]
+        jogado = self._fio(armazenamento, despejo, criado_em=base)
+        escolhido = self._fio(armazenamento, despejo, EstadoFio.ESCOLHIDO, criado_em=base + timedelta(hours=1))
+        assert armazenamento.mesa() == [jogado, escolhido]
         armazenamento.fechar()
 
     def test_ordem_do_despejo(self):
@@ -1537,4 +1581,21 @@ class TestTrechosFio:
             armazenamento.salvar_despejo_com_fios(despejo, [fio])
         assert armazenamento.listar() == []
         assert armazenamento.buscar_fios(despejo.id) == []
+        armazenamento.fechar()
+
+
+class TestRelogioInjetado:
+    def test_assunto_e_contexto_usam_o_relogio(self):
+        instante = datetime(2026, 3, 4, 5, 6, 7, tzinfo=timezone.utc)
+        armazenamento = Armazenamento(":memory:", relogio=lambda: instante)
+        armazenamento.registrar_assunto("Trabalho")
+        armazenamento.salvar_contexto("2026-03-04", ContextoAmbiente(sono_horas=7))
+        (criado_em,) = armazenamento._conexao.execute(
+            "SELECT criado_em FROM assuntos WHERE chave_norm = 'trabalho'"
+        ).fetchone()
+        (created_at,) = armazenamento._conexao.execute(
+            "SELECT created_at FROM contexto_dia WHERE entry_date = '2026-03-04'"
+        ).fetchone()
+        assert datetime.fromisoformat(criado_em) == instante
+        assert datetime.fromisoformat(created_at) == instante
         armazenamento.fechar()
