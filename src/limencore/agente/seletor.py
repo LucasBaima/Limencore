@@ -16,11 +16,6 @@ class SeletorDeMovimento(Protocol):
     def selecionar(self, entry: Despejo) -> Movimento: ...
 
 
-# Alias temporario: o repo privado ainda importa este nome.
-# Remover quando o privado migrar para SeletorDeMovimento.
-SeletorDePergunta = SeletorDeMovimento
-
-
 class SeletorGenerico:
     """Implementação pública default. Zero inteligência de escolha."""
 

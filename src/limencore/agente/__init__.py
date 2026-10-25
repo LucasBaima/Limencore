@@ -1,6 +1,6 @@
 from .movimento import Forma, Movimento
 from .pergunta import CamadaContencao, Pergunta
-from .seletor import SeletorDeMovimento, SeletorDePergunta, SeletorGenerico
+from .seletor import SeletorDeMovimento, SeletorGenerico
 
 #NanoApi
 
@@ -10,6 +10,5 @@ __all__ = [  # Diretorios externos puxam daqui
     "Movimento",
     "Pergunta",
     "SeletorDeMovimento",
-    "SeletorDePergunta",  # alias temporario; sai quando o privado migrar
     "SeletorGenerico",
 ]

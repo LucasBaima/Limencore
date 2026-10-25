@@ -71,10 +71,3 @@ class TestFrozen:
         e = Despejo(conteudo="x")
         with pytest.raises(dataclasses.FrozenInstanceError):
             e.instante = datetime.now(timezone.utc)
-
-
-class TestShimEntry:
-    def test_alias_aponta_pro_despejo(self):
-        from limencore.entry import ThoughtEntry
-
-        assert ThoughtEntry is Despejo

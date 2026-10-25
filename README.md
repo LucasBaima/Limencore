@@ -50,7 +50,7 @@ limencore/
 │   └── limencore/
 │       ├── __init__.py
 │       ├── main.py
-│       └── entry.py        # modelo da entrada-pensamento
+│       └── despejo.py      # modelo da entrada-pensamento
 ├── tests/
 ├── docs/
 ├── requirements.txt

@@ -251,8 +251,15 @@ class TestListar:
             assert entry.instante.tzinfo is not None
         armazenamento.fechar()
 
-
-
+    def test_listar_desempata_mesmo_instante_por_id(self):
+        armazenamento = Armazenamento(":memory:")
+        instante = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        maior = Despejo(id="ffffffff-ffff-4fff-bfff-ffffffffffff", conteudo="b", instante=instante)
+        menor = Despejo(id="00000000-0000-4000-8000-000000000000", conteudo="a", instante=instante)
+        armazenamento.salvar(maior)
+        armazenamento.salvar(menor)
+        assert [d.id for d in armazenamento.listar()] == [menor.id, maior.id]
+        armazenamento.fechar()
 
 
 class TestBuscarPorData:
@@ -802,6 +809,21 @@ class TestAtomicidade:
         [salvo] = armazenamento.buscar_fios(despejo.id)
         assert salvo.estado is EstadoFio.JOGADO
         assert len(armazenamento.historico(fio.id)) == 1
+        armazenamento.fechar()
+
+
+    def test_salvar_contexto_desfaz_canonicalizacao_se_falhar_depois(self, monkeypatch):
+        armazenamento = Armazenamento(":memory:")
+        # agora() roda depois da canonicalizacao, ja dentro da gravacao do contexto
+        monkeypatch.setattr(armazenamento, "agora", self._falhar)
+        with pytest.raises(RuntimeError):
+            armazenamento.salvar_contexto(
+                "2026-01-01", ContextoAmbiente(energia={"Categoria Nova": 10})
+            )
+        assert armazenamento.buscar_contexto("2026-01-01") is None
+        assert armazenamento._conexao.execute(
+            "SELECT COUNT(*) FROM categorias"
+        ).fetchone() == (0,)
         armazenamento.fechar()
 
 

@@ -825,29 +825,33 @@ class Armazenamento:
         return resultado
 
     def salvar_contexto(self, entry_date: str, contexto: ContextoAmbiente):
-        energia = self._canonicalizar_energia(contexto.energia)
-        energia_json = json.dumps(energia)
-        self._conexao.execute(
-            """
-            INSERT INTO contexto_dia
-              (entry_date, sono_horas, sono_interrupcoes, cafeina_mg, energia, created_at)
-              VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(entry_date) DO UPDATE SET
-              sono_horas = excluded.sono_horas,
-              sono_interrupcoes = excluded.sono_interrupcoes,
-              cafeina_mg = excluded.cafeina_mg,
-              energia = excluded.energia
-            """,
-            (
-                entry_date,
-                contexto.sono_horas,
-                contexto.sono_interrupcoes,
-                contexto.cafeina_mg,
-                energia_json,
-                self.agora().astimezone(timezone.utc).isoformat(),
-            ),
-        )
-        self._conexao.commit()
+        try:
+            energia = self._canonicalizar_energia(contexto.energia)
+            energia_json = json.dumps(energia)
+            self._conexao.execute(
+                """
+                INSERT INTO contexto_dia
+                  (entry_date, sono_horas, sono_interrupcoes, cafeina_mg, energia, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(entry_date) DO UPDATE SET
+                  sono_horas = excluded.sono_horas,
+                  sono_interrupcoes = excluded.sono_interrupcoes,
+                  cafeina_mg = excluded.cafeina_mg,
+                  energia = excluded.energia
+                """,
+                (
+                    entry_date,
+                    contexto.sono_horas,
+                    contexto.sono_interrupcoes,
+                    contexto.cafeina_mg,
+                    energia_json,
+                    self.agora().astimezone(timezone.utc).isoformat(),
+                ),
+            )
+            self._conexao.commit()
+        except Exception:
+            self._conexao.rollback()
+            raise
 
     def buscar_despejo(self, id_: str) -> Despejo | None:
         linha = self._conexao.execute(
@@ -860,7 +864,7 @@ class Armazenamento:
 
     def listar(self) -> list[Despejo]:
         cursor = self._conexao.execute(
-            "SELECT id, conteudo, instante FROM despejos ORDER BY instante"
+            "SELECT id, conteudo, instante FROM despejos ORDER BY instante, id"
         )
         return [
             Despejo(

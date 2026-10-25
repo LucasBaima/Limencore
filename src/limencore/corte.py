@@ -5,6 +5,8 @@ from limencore.forma import Forma
 
 @dataclass(frozen=True)
 class Trecho:  # pedaco exato do texto do despejo, marcado por posicao [inicio, fim); nunca copia
+    # posicoes em code points (indices de str do Python), nao em unidades UTF-16;
+    # quem fatiar em outra linguagem precisa converter.
     inicio: int
     fim: int
 

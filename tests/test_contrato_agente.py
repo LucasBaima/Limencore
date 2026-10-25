@@ -7,7 +7,6 @@ from limencore.agente import (
     Movimento,
     Pergunta,
     SeletorDeMovimento,
-    SeletorDePergunta,
     SeletorGenerico,
 )
 from limencore.despejo import Despejo
@@ -21,7 +20,6 @@ class TestContratoAgente:
             "Movimento",
             "Pergunta",
             "SeletorDeMovimento",
-            "SeletorDePergunta",
             "SeletorGenerico",
         }
 
@@ -32,9 +30,6 @@ class TestContratoAgente:
     def test_porta_da_frente_e_o_mesmo_objeto(self):
         assert limencore.agente.Movimento is limencore.agente.movimento.Movimento
         assert limencore.agente.Forma is limencore.agente.movimento.Forma
-
-    def test_alias_temporario_aponta_pro_novo(self):
-        assert SeletorDePergunta is SeletorDeMovimento
 
     def test_generico_via_contrato_devolve_movimento(self):
         entry = Despejo(conteudo="x")
