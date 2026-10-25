@@ -15,13 +15,27 @@ from limencore.despejo import Despejo
 class TestContratoAgente:
     def test_all_exato(self):
         assert set(limencore.agente.__all__) == {
+            "AgenteDoQuarto",
+            "AgenteSilencioso",
             "CamadaContencao",
+            "Escrito",
             "Forma",
             "Movimento",
             "Pergunta",
+            "Quarto",
+            "RegistroDaSessao",
+            "RespostaDoQuarto",
             "SeletorDeMovimento",
             "SeletorGenerico",
         }
+
+    def test_quarto_pela_porta_da_frente(self):
+        from limencore.agente import AgenteDoQuarto, Quarto, RegistroDaSessao, RespostaDoQuarto
+
+        assert Quarto is limencore.agente.quarto.Quarto
+        assert AgenteDoQuarto is limencore.agente.quarto.AgenteDoQuarto
+        assert RespostaDoQuarto is limencore.agente.quarto.RespostaDoQuarto
+        assert RegistroDaSessao is limencore.agente.encaminhamento.RegistroDaSessao
 
     def test_tudo_em_all_e_importavel(self):
         for nome in limencore.agente.__all__:

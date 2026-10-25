@@ -23,6 +23,8 @@ _OPERACAO_DO_DESTINO = {EstadoFio.GUARDADO: "GUARDAR", EstadoFio.RESOLVIDO: "POU
 
 MOTIVO_DESFAZER = "desfazer"
 
+LIMITE_DO_TITULO = 120
+
 
 def _trechos_para_json(trechos: tuple[Trecho, ...]) -> list[list[int]]:
     return [[t.inicio, t.fim] for t in trechos]
@@ -52,6 +54,14 @@ def _aparar(texto: str, trechos: list[Trecho]) -> tuple[Trecho, ...]:
 class Dia:
     despejos: list[Despejo]
     contexto: ContextoAmbiente | None
+
+
+@dataclass(frozen=True)
+class DespejoDoDia:  # um despejo do dia, com o titulo dado pelo usuario e seus fios
+    despejo: Despejo
+    titulo: str | None
+    fios: tuple[Fio, ...]  # menos JUNTADO, em ordem de posicao no texto
+    tem_fio_aberto: bool  # algum JOGADO ou ESCOLHIDO
 
 
 class Armazenamento:
@@ -190,6 +200,15 @@ class Armazenamento:
             )
             """
         )
+        self._conexao.execute(
+            """
+            CREATE TABLE IF NOT EXISTS titulos_despejo (
+                despejo_id TEXT PRIMARY KEY REFERENCES despejos(id),
+                titulo TEXT NOT NULL,
+                atualizado_em TEXT NOT NULL
+            )
+            """
+        )
         colunas_fios = {
             linha[1] for linha in self._conexao.execute("PRAGMA table_info(fios)")
         }
@@ -305,6 +324,13 @@ class Armazenamento:
         if linha is None:
             raise ValueError("fio nao encontrado")
         return self._linha_para_fio(linha)
+
+    def buscar_fio(self, fio_id: str) -> Fio | None:
+        # qualquer estado, inclusive JUNTADO
+        try:
+            return self._buscar_fio(fio_id)
+        except ValueError:
+            return None
 
     def _filtro_estados(self, estados: Iterable[EstadoFio] | None, coluna: str = "estado") -> tuple[str, tuple]:
         # sem estados pedidos: tudo menos JUNTADO
@@ -586,7 +612,13 @@ class Armazenamento:
 
     def janela(self, fio_id: str) -> JanelaDoFio:
         linha = self._conexao.execute(
-            "SELECT d.conteudo FROM fios f JOIN despejos d ON d.id = f.despejo_id WHERE f.id = ?",
+            """
+            SELECT d.conteudo, f.criado_em, a.rotulo
+              FROM fios f
+              JOIN despejos d ON d.id = f.despejo_id
+              LEFT JOIN assuntos a ON a.chave_norm = f.assunto_chave
+             WHERE f.id = ?
+            """,
             (fio_id,),
         ).fetchone()
         if linha is None:
@@ -601,6 +633,9 @@ class Armazenamento:
             conteudo_do_despejo=linha[0],
             trechos=self._trechos_do_fio(fio_id),
             eventos=tuple(e for _, _, e in eventos),
+            fio_id=fio_id,
+            criado_em=datetime.fromisoformat(linha[1]),
+            assunto=linha[2],
         )
 
     def entrar(self, fio: Fio) -> Fio:
@@ -862,6 +897,39 @@ class Armazenamento:
         id_, conteudo, instante = linha
         return Despejo(id=id_, conteudo=conteudo, instante=datetime.fromisoformat(instante))
 
+    def renomear_despejo(self, despejo_id: str, titulo: str | None) -> None:
+        # o despejo nao muda: o titulo e um dado a parte; vazio ou None remove
+        if titulo is not None and not isinstance(titulo, str):
+            raise ValueError(f"titulo invalido: esperado str ou None, veio {titulo!r}")
+        titulo = titulo.strip() if titulo is not None else ""
+        if len(titulo) > LIMITE_DO_TITULO:
+            raise ValueError(f"titulo longo demais: limite de {LIMITE_DO_TITULO} caracteres, veio {len(titulo)}")
+        try:
+            if self._conexao.execute("SELECT 1 FROM despejos WHERE id = ?", (despejo_id,)).fetchone() is None:
+                raise ValueError("despejo nao encontrado")
+            if titulo:
+                self._conexao.execute(
+                    """
+                    INSERT INTO titulos_despejo (despejo_id, titulo, atualizado_em) VALUES (?, ?, ?)
+                      ON CONFLICT(despejo_id) DO UPDATE
+                      SET titulo = excluded.titulo, atualizado_em = excluded.atualizado_em
+                    """,
+                    # sempre UTC no banco: ordenacao e filtros comparam texto
+                    (despejo_id, titulo, self.agora().astimezone(timezone.utc).isoformat()),
+                )
+            else:
+                self._conexao.execute("DELETE FROM titulos_despejo WHERE despejo_id = ?", (despejo_id,))
+            self._conexao.commit()
+        except Exception:
+            self._conexao.rollback()
+            raise
+
+    def titulo_do_despejo(self, despejo_id: str) -> str | None:
+        linha = self._conexao.execute(
+            "SELECT titulo FROM titulos_despejo WHERE despejo_id = ?", (despejo_id,)
+        ).fetchone()
+        return linha[0] if linha is not None else None
+
     def listar(self) -> list[Despejo]:
         cursor = self._conexao.execute(
             "SELECT id, conteudo, instante FROM despejos ORDER BY instante, id"
@@ -932,6 +1000,25 @@ class Armazenamento:
         despejos = self.buscar_por_data(data_local, tz)
         contexto = self.buscar_contexto(data_local.isoformat())
         return Dia(despejos=despejos, contexto=contexto)
+
+    def dia_com_fios(self, data_local: date, tz: ZoneInfo) -> list[DespejoDoDia]:
+        # mesma janela de dia local de buscar_por_data; mais recente primeiro
+        despejos = sorted(self.buscar_por_data(data_local, tz), key=lambda d: (d.instante, d.id), reverse=True)
+        resultado = []
+        for despejo in despejos:
+            fios = sorted(
+                self.buscar_fios(despejo.id),
+                key=lambda f: (f.trechos[0].inicio if f.trechos else 0, f.criado_em, f.id),
+            )
+            resultado.append(
+                DespejoDoDia(
+                    despejo=despejo,
+                    titulo=self.titulo_do_despejo(despejo.id),
+                    fios=tuple(fios),
+                    tem_fio_aberto=any(f.estado in (EstadoFio.JOGADO, EstadoFio.ESCOLHIDO) for f in fios),
+                )
+            )
+        return resultado
 
     def listar_contextos(
         self, inicio: str, fim: str

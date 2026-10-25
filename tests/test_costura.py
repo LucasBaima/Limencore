@@ -93,6 +93,28 @@ class TestJanela:
         with pytest.raises(ValueError):
             banco.janela(Fio(despejo_id="00000000-0000-4000-8000-000000000000").id)
 
+    def test_sabe_de_qual_fio_e(self, banco, dois_fios):
+        a, _ = dois_fios
+        banco.marcar_assunto(a, "  Trabalho   do Mes ")
+        janela = banco.janela(a.id)
+        assert janela.fio_id == a.id
+        assert janela.criado_em == a.criado_em
+        assert janela.assunto == "Trabalho do Mes"
+
+    def test_fio_sem_assunto(self, banco, dois_fios):
+        a, _ = dois_fios
+        assert banco.janela(a.id).assunto is None
+
+    def test_so_os_tres_campos_antigos_continua_valido(self):
+        j = JanelaDoFio("x", (), ())
+        assert (j.fio_id, j.criado_em, j.assunto) == (None, None, None)
+
+    def test_criado_em_sem_timezone(self):
+        from datetime import datetime
+
+        with pytest.raises(ValueError):
+            JanelaDoFio("x", (), (), criado_em=datetime(2026, 1, 1))
+
 
 class TestSombraSilenciosa:
     def test_sem_nota_nao_destaca(self, banco, dois_fios):
@@ -182,11 +204,28 @@ class TestGuardaDaCostura:
         resultado = Quarto(banco, agente=AgenteFixo("sobre o prazo, e ai?")).escrever(fio, "o prazo")
         assert resultado.resposta.texto == "sobre o prazo, e ai?"
 
-    def test_tres_palavras_repetidas_bloqueiam(self, banco, dois_fios):
-        a, _ = dois_fios
-        resultado = Quarto(banco, agente=AgenteFixo("hm: Falta, a PARTE!")).escrever(a, "falta a parte")
+    def test_nota_de_tres_palavras_nunca_barra_sozinha(self, banco):
+        _, (fio,) = despejo_com_fios(banco, "um despejo qualquer aqui", [(0, 2)], estado=EstadoFio.ESCOLHIDO)
+        resultado = Quarto(banco, agente=AgenteFixo("hm: Falta, a PARTE!")).escrever(fio, "falta a parte")
+        assert resultado.resposta.texto == "hm: Falta, a PARTE!"
+
+    def test_quatro_palavras_seguidas_de_nota_longa_bloqueiam(self, banco):
+        _, (fio,) = despejo_com_fios(banco, "um despejo qualquer aqui", [(0, 2)], estado=EstadoFio.ESCOLHIDO)
+        nota = "hoje de manha falta a parte dos numeros e eu nem comecei"
+        resultado = Quarto(banco, agente=AgenteFixo("entao, FALTA a parte   dos?")).escrever(fio, nota)
         assert resultado.resposta.texto is None
-        assert banco.turnos(a.id) == []
+        assert banco.turnos(fio.id) == []
+
+    def test_tres_palavras_seguidas_de_nota_longa_passam(self, banco):
+        _, (fio,) = despejo_com_fios(banco, "um despejo qualquer aqui", [(0, 2)], estado=EstadoFio.ESCOLHIDO)
+        nota = "hoje de manha falta a parte dos numeros e eu nem comecei"
+        resultado = Quarto(banco, agente=AgenteFixo("falta a parte: qual?")).escrever(fio, nota)
+        assert resultado.resposta.texto == "falta a parte: qual?"
+
+    def test_quatro_palavras_seguidas_de_trecho_longo_bloqueiam(self, banco, dois_fios):
+        a, _ = dois_fios
+        resultado = Quarto(banco, agente=AgenteFixo("e o prazo do relatorio?")).escrever(a, "uma nota")
+        assert resultado.resposta.texto is None
 
     def test_palavras_fora_de_sequencia_nao_bloqueiam(self, banco, dois_fios):
         a, _ = dois_fios

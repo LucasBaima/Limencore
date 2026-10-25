@@ -49,27 +49,25 @@ class Escrito:  # a nota gravada + a resposta do agente
     resposta: RespostaDoQuarto
 
 
-MINIMO_DE_PALAVRAS = 3
+MINIMO_DE_PALAVRAS = 4
 
 
 def _palavras(texto: str) -> list[str]:
     return re.findall(r"\w+", texto.casefold())
 
 
-def _contem(maior: list[str], menor: list[str]) -> bool:
-    n = len(menor)
-    return any(maior[i:i + n] == menor for i in range(len(maior) - n + 1))
+def _sequencias(palavras: list[str]) -> set[tuple[str, ...]]:
+    n = MINIMO_DE_PALAVRAS
+    return {tuple(palavras[i:i + n]) for i in range(len(palavras) - n + 1)}
 
 
 def _repete_o_fio(janela: JanelaDoFio, texto: str) -> bool:
-    # algum trecho do fio ou nota do usuario (3+ palavras) aparece inteiro, palavra por palavra, na resposta
+    # a resposta tem 4+ palavras seguidas de algum trecho do fio ou nota do usuario
     trechos = janela.trechos or (Trecho(0, len(janela.conteudo_do_despejo)),)
     pedacos = [recortar(janela.conteudo_do_despejo, t) for t in trechos]
     pedacos += [e.texto for e in janela.eventos if e.autoria == "usuario"]
-    resposta = _palavras(texto)
-    return any(
-        len(p) >= MINIMO_DE_PALAVRAS and _contem(resposta, p) for p in map(_palavras, pedacos)
-    )
+    resposta = _sequencias(_palavras(texto))
+    return any(not resposta.isdisjoint(_sequencias(_palavras(p))) for p in pedacos)
 
 
 def avaliar_no_portao(
