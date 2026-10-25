@@ -15,6 +15,7 @@ class Relogio:  # relogio injetavel: anda so quando o teste manda
     def __call__(self) -> datetime:
         return self.agora
 
+
     def andar(self, segundos: float) -> None:
         self.agora += timedelta(seconds=segundos)
 
