@@ -15,6 +15,7 @@ from .encaminhamento import (
     DetectorDeEncaminhamento,
     DetectorPorExpressoes,
     Encaminhamento,
+    Familia,
     Passagem,
     RegistroDaSessao,
 )
@@ -71,6 +72,32 @@ def _repete_o_fio(janela: JanelaDoFio, texto: str) -> bool:
     )
 
 
+def avaliar_no_portao(
+    detector: DetectorDeEncaminhamento, texto: str
+) -> tuple[Passagem, Familia, tuple[Familia, ...]]:
+    # adaptador: detector que so tem avaliar() fala da propria pessoa
+    try:
+        avaliar_com_familias = getattr(detector, "avaliar_com_familias", None)
+        if avaliar_com_familias is not None:
+            passagem, familia, outras = avaliar_com_familias(texto)
+            outras = tuple(outras)
+        else:
+            avaliar_com_familia = getattr(detector, "avaliar_com_familia", None)
+            if avaliar_com_familia is None:
+                return detector.avaliar(texto), Familia.SI_MESMA, ()
+            (passagem, familia), outras = avaliar_com_familia(texto), ()
+        if not all(isinstance(f, Familia) for f in (familia, *outras)):
+            raise TypeError(f"familia invalida: {familia!r}, {outras!r}")
+        return passagem, familia, outras
+    except Exception:
+        return Passagem.ENCAMINHAR, Familia.SI_MESMA, ()  # na duvida, o lado seguro
+
+
+def marca_a_sessao(familia: Familia) -> bool:
+    # risco de terceiro nao marca a sessao nem perde o retorno
+    return familia is not Familia.ALGUEM_EM_RISCO
+
+
 class Quarto:
     """Escrever dentro do quarto passando pelo mesmo portao da entrada."""
 
@@ -99,11 +126,20 @@ class Quarto:
             raise ValueError(f"conferencia sem origem do quarto: {conferencia.origem!r}")
         if acontecendo_agora:
             recente = self._sessao.houve_recente(conferencia.instante)
-            return self._encaminhar(conferencia.texto, conferencia.instante, oferece_retorno=not recente)
+            return self._encaminhar(
+                conferencia.texto, conferencia.instante, not recente,
+                conferencia.familia, conferencia.outras_familias, conferencia.origem,
+            )
         # a pessoa ja respondeu: nao passa pelo detector de novo
-        if conferencia.origem == "pousar":
-            return self._armazenamento.pousar(fio, conferencia.texto)
-        return self._gravar(fio, conferencia.texto)
+        return self._seguir(fio, conferencia.texto, conferencia.origem)
+
+    def voltar(self, fio: Fio, encaminhamento: Encaminhamento) -> Escrito | Fio:
+        # so o risco de terceiro tem volta: o texto segue o fluxo normal, sem detector
+        if encaminhamento.familia is not Familia.ALGUEM_EM_RISCO:
+            raise ValueError(f"encaminhamento sem volta: {encaminhamento.familia!r}")
+        if encaminhamento.origem not in ORIGENS_DA_CONFERENCIA:
+            raise ValueError(f"encaminhamento sem origem do quarto: {encaminhamento.origem!r}")
+        return self._seguir(fio, encaminhamento.texto, encaminhamento.origem)
 
     def pousar(self, fio: Fio, frase: str | None = None) -> Fio | Conferencia | Encaminhamento:
         if frase is not None and frase.strip():
@@ -115,17 +151,21 @@ class Quarto:
     def _portao(self, texto: str, origem: str) -> Conferencia | Encaminhamento | None:
         # None = segue
         instante = self._armazenamento.agora()
-        try:
-            passagem = self._detector.avaliar(texto)
-        except Exception:
-            passagem = Passagem.ENCAMINHAR  # na duvida, o lado seguro
-        if passagem is not Passagem.SEGUIR and self._sessao.houve_recente(instante):
-            return self._encaminhar(texto, instante, oferece_retorno=False)
+        passagem, familia, outras = avaliar_no_portao(self._detector, texto)
+        if passagem is not Passagem.SEGUIR and marca_a_sessao(familia) and self._sessao.houve_recente(instante):
+            return self._encaminhar(texto, instante, False, familia, outras, origem)
         if passagem is Passagem.ENCAMINHAR:
-            return self._encaminhar(texto, instante, oferece_retorno=True)
+            return self._encaminhar(texto, instante, True, familia, outras, origem)
         if passagem is Passagem.CONFERIR:
-            return Conferencia(texto=texto, instante=instante, origem=origem)
+            return Conferencia(
+                texto=texto, instante=instante, origem=origem, familia=familia, outras_familias=outras
+            )
         return None
+
+    def _seguir(self, fio: Fio, texto: str, origem: str) -> Escrito | Fio:
+        if origem == "pousar":
+            return self._armazenamento.pousar(fio, texto)
+        return self._gravar(fio, texto)
 
     def _gravar(self, fio: Fio, texto: str) -> Escrito:
         nota = self._armazenamento.escrever(fio, texto)
@@ -141,7 +181,21 @@ class Quarto:
             self._armazenamento.registrar_turno(fio, resposta.texto)
         return Escrito(nota=nota, resposta=resposta)
 
-    def _encaminhar(self, texto: str, instante: datetime, oferece_retorno: bool) -> Encaminhamento:
+    def _encaminhar(
+        self,
+        texto: str,
+        instante: datetime,
+        oferece_retorno: bool,
+        familia: Familia,
+        outras: tuple[Familia, ...],
+        origem: str | None,
+    ) -> Encaminhamento:
         # so lembra em memoria: nada vai pro banco
-        self._sessao.registrar(instante)
-        return Encaminhamento(texto=texto, instante=instante, oferece_retorno=oferece_retorno)
+        if marca_a_sessao(familia):
+            self._sessao.registrar(instante)
+        else:
+            oferece_retorno = True
+        return Encaminhamento(
+            texto=texto, instante=instante, oferece_retorno=oferece_retorno,
+            familia=familia, outras_familias=outras, origem=origem,
+        )
