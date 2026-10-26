@@ -8,23 +8,30 @@ from .encaminhamento import (
     Passagem,
     RegistroDaSessao,
 )
+
 from .movimento import Forma, Movimento
-from .encaminhamento import RegistroDaSessao
 from .pergunta import CamadaContencao, Pergunta
 from .quarto import AgenteDoQuarto, AgenteSilencioso, Escrito, Quarto, RespostaDoQuarto
+from .recepcao import Recepcao
 from .seletor import SeletorDeMovimento, SeletorGenerico
 
-
-
-__all__ = [  # Diretorios externos puxam daqui
+__all__ = [  # o que quem usa o Limencore importa daqui
     "AgenteDoQuarto",
     "AgenteSilencioso",
     "CamadaContencao",
+    "Conferencia",
+    "DetectorComFamilias",
+    "DetectorDeEncaminhamento",
+    "DetectorPorExpressoes",
+    "Encaminhamento",
     "Escrito",
+    "Familia",
     "Forma",
     "Movimento",
+    "Passagem",
     "Pergunta",
     "Quarto",
+    "Recepcao",
     "RegistroDaSessao",
     "RespostaDoQuarto",
     "SeletorDeMovimento",
