@@ -1,3 +1,4 @@
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,6 +20,9 @@ from .encaminhamento import (
     Passagem,
     RegistroDaSessao,
 )
+
+_log = logging.getLogger("limencore.agente")
+_log.addHandler(logging.NullHandler())  # biblioteca: so aparece se quem usa configurar
 
 
 @dataclass(frozen=True)
@@ -137,7 +141,7 @@ class Quarto:
             raise ValueError(f"encaminhamento sem volta: {encaminhamento.familia!r}")
         if encaminhamento.origem not in ORIGENS_DA_CONFERENCIA:
             raise ValueError(f"encaminhamento sem origem do quarto: {encaminhamento.origem!r}")
-        return self._seguir(fio, encaminhamento.texto, encaminhamento.origem)
+        return self._seguir(fio, encaminhamento.texto, encaminhamento.origem, silencio_deliberado=True)
 
     def pousar(self, fio: Fio, frase: str | None = None) -> Fio | Conferencia | Encaminhamento:
         if frase is not None and frase.strip():
@@ -160,19 +164,22 @@ class Quarto:
             )
         return None
 
-    def _seguir(self, fio: Fio, texto: str, origem: str) -> Escrito | Fio:
+    def _seguir(self, fio: Fio, texto: str, origem: str, silencio_deliberado: bool = False) -> Escrito | Fio:
         if origem == "pousar":
             return self._armazenamento.pousar(fio, texto)
-        return self._gravar(fio, texto)
+        return self._gravar(fio, texto, silencio_deliberado)
 
-    def _gravar(self, fio: Fio, texto: str) -> Escrito:
+    def _gravar(self, fio: Fio, texto: str, silencio_deliberado: bool = False) -> Escrito:
         # antes do commit da nota (dentro de escrever): recusa e falha sobem
         nota = self._armazenamento.escrever(fio, texto)
+        if silencio_deliberado:
+            # nao e falha: sem janela, sem agente, sem turno, sem log e sem destacar o pouso
+            return Escrito(nota=nota, resposta=RespostaDoQuarto(texto=None, destacar_pouso=False))
         try:
             resposta = self._responder(fio)
-        except Exception:
+        except Exception as erro:
             # a nota ja foi gravada: qualquer falha daqui pra frente cai na sombra silenciosa
-            resposta = self._sombra(fio, nota)
+            resposta = self._sombra(fio, nota, erro)
         return Escrito(nota=nota, resposta=resposta)
 
     def _responder(self, fio: Fio) -> RespostaDoQuarto:
@@ -184,7 +191,9 @@ class Quarto:
             self._armazenamento.registrar_turno(fio, resposta.texto)
         return resposta
 
-    def _sombra(self, fio: Fio, nota: Nota) -> RespostaDoQuarto:
+    def _sombra(self, fio: Fio, nota: Nota, erro: Exception) -> RespostaDoQuarto:
+        # so o tipo: a mensagem da excecao pode carregar texto de alguem
+        _log.warning("quarto: sombra por %s", type(erro).__name__)
         # nao depende do banco, que pode ser o que falhou: a sombra so olha se ha nota do usuario
         evento = Evento("usuario", nota.texto, nota.instante)
         janela = JanelaDoFio(conteudo_do_despejo="", trechos=(), eventos=(evento,), fio_id=fio.id)

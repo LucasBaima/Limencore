@@ -1,5 +1,10 @@
+import logging
+import os
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -165,6 +170,7 @@ def _por_voltar(armazenamento, fio, agente):
 
 
 CAMINHOS = [_por_escrever, _por_confirmar, _por_voltar]
+CAMINHOS_COM_AGENTE = [_por_escrever, _por_confirmar]  # voltar nao chama o agente: nao ha o que falhar
 
 
 def _nota_gravada_em_silencio(armazenamento, fio, resultado):
@@ -175,7 +181,7 @@ def _nota_gravada_em_silencio(armazenamento, fio, resultado):
     assert armazenamento.turnos(fio.id) == []
 
 
-@pytest.mark.parametrize("caminho", CAMINHOS)
+@pytest.mark.parametrize("caminho", CAMINHOS_COM_AGENTE)
 def test_janela_que_falha_nao_derruba(armazenamento, fio, monkeypatch, caminho):
     monkeypatch.setattr(armazenamento, "janela", _falha_do_banco)
     agente = AgenteQueFala()
@@ -184,14 +190,14 @@ def test_janela_que_falha_nao_derruba(armazenamento, fio, monkeypatch, caminho):
     assert agente.chamadas == 0
 
 
-@pytest.mark.parametrize("caminho", CAMINHOS)
+@pytest.mark.parametrize("caminho", CAMINHOS_COM_AGENTE)
 def test_registrar_turno_que_falha_nao_derruba(armazenamento, fio, monkeypatch, caminho):
     monkeypatch.setattr(armazenamento, "registrar_turno", _falha_do_banco)
     resultado = caminho(armazenamento, fio, AgenteQueFala())
     _nota_gravada_em_silencio(armazenamento, fio, resultado)
 
 
-@pytest.mark.parametrize("caminho", CAMINHOS)
+@pytest.mark.parametrize("caminho", CAMINHOS_COM_AGENTE)
 def test_commit_do_turno_que_falha_nao_deixa_turno_parcial(armazenamento, fio, monkeypatch, caminho):
     # falha de verdade dentro do storage: o INSERT ja rodou quando o commit quebra
     registrar_de_verdade = armazenamento.registrar_turno
@@ -210,7 +216,7 @@ def test_commit_do_turno_que_falha_nao_deixa_turno_parcial(armazenamento, fio, m
     assert not conexao_real.in_transaction
 
 
-@pytest.mark.parametrize("caminho", CAMINHOS)
+@pytest.mark.parametrize("caminho", CAMINHOS_COM_AGENTE)
 def test_agente_que_falha_nao_derruba(armazenamento, fio, caminho):
     resultado = caminho(armazenamento, fio, AgenteQueFalha())
     _nota_gravada_em_silencio(armazenamento, fio, resultado)
@@ -298,3 +304,109 @@ def test_pousar_desfaz_o_estado_se_a_nota_falhar(armazenamento, fio, monkeypatch
     assert armazenamento.buscar_fio(fio.id).estado is EstadoFio.ESCOLHIDO
     assert armazenamento.notas(fio.id) == []
     assert EstadoFio.RESOLVIDO not in [t.para for t in armazenamento.historico(fio.id)]
+
+
+# --- voltar: silencio deliberado, que nao e a sombra de falha ---
+
+SILENCIO_DELIBERADO = RespostaDoQuarto(texto=None, destacar_pouso=False)
+LOGGER = "limencore.agente"
+MARCADOR = "marcadorsecreto"
+
+
+def _registros(caplog):
+    return [(r.levelno, r.getMessage()) for r in caplog.records if r.name == LOGGER]
+
+
+def test_voltar_grava_a_nota_em_silencio_sem_chamar_o_agente(armazenamento, fio):
+    agente = AgenteQueFala()
+    resultado = _por_voltar(armazenamento, fio, agente)
+    assert isinstance(resultado, Escrito)
+    assert resultado.resposta == SILENCIO_DELIBERADO
+    assert agente.chamadas == 0
+    assert armazenamento.turnos(fio.id) == []
+    assert [n.texto for n in armazenamento.notas(fio.id)] == [NOTA_COMUM]
+
+
+def test_voltar_nao_monta_a_janela(armazenamento, fio, monkeypatch, caplog):
+    # se montasse, a falha cairia na sombra: destacaria o pouso e iria pro log
+    monkeypatch.setattr(armazenamento, "janela", _falha_do_banco)
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        resultado = _por_voltar(armazenamento, fio, AgenteQueFalha())
+    assert resultado.resposta == SILENCIO_DELIBERADO
+    assert _registros(caplog) == []
+
+
+@pytest.mark.parametrize("caminho", CAMINHOS_COM_AGENTE)
+def test_escrever_e_confirmar_seguem_chamando_o_agente(armazenamento, fio, caminho):
+    agente = AgenteQueFala()
+    resultado = caminho(armazenamento, fio, agente)
+    assert resultado.resposta == RespostaDoQuarto(texto="e o resto?", destacar_pouso=False)
+    assert agente.chamadas == 1
+    assert [t.texto for t in armazenamento.turnos(fio.id)] == ["e o resto?"]
+    assert len(armazenamento.notas(fio.id)) == 1
+
+
+def test_voltar_com_origem_pousar_nao_chama_o_agente(armazenamento, fio, caplog):
+    agente = AgenteQueFala()
+    quarto = Quarto(armazenamento, DetectorDeTerceiro(), agente=agente)
+    encaminhamento = quarto.pousar(fio, NOTA_COMUM)
+    assert isinstance(encaminhamento, Encaminhamento)
+    assert encaminhamento.origem == "pousar"
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        pousado = quarto.voltar(fio, encaminhamento)
+    assert pousado.estado is EstadoFio.RESOLVIDO
+    assert agente.chamadas == 0
+    assert armazenamento.turnos(fio.id) == []
+    assert [(n.tipo, n.texto) for n in armazenamento.notas(fio.id)] == [(TipoNota.POUSO, NOTA_COMUM)]
+    assert _registros(caplog) == []
+
+
+# --- logger: so o tipo da falha, nunca texto de ninguem ---
+
+
+def test_sombra_registra_o_tipo_da_falha(armazenamento, fio, monkeypatch, caplog):
+    monkeypatch.setattr(armazenamento, "janela", _falha_do_banco)
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        _por_escrever(armazenamento, fio, AgenteQueFala())
+    assert _registros(caplog) == [(logging.WARNING, "quarto: sombra por OperationalError")]
+
+
+def test_log_nunca_leva_a_mensagem_da_excecao_nem_a_nota(armazenamento, fio, caplog):
+    class AgenteComSegredo:
+        def responder(self, janela):
+            raise RuntimeError(f"quebrou em: {MARCADOR}")
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        Quarto(armazenamento, agente=AgenteComSegredo()).escrever(fio, f"anotei {MARCADOR} aqui")
+    assert _registros(caplog) == [(logging.WARNING, "quarto: sombra por RuntimeError")]
+    assert MARCADOR not in caplog.text
+    assert all(r.exc_info is None and r.exc_text is None for r in caplog.records)
+
+
+def test_voltar_nao_gera_log(armazenamento, fio, caplog):
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        _por_voltar(armazenamento, fio, AgenteQueFala())
+    assert _registros(caplog) == []
+
+
+def test_sem_configuracao_nada_vai_pro_stderr(capfd):
+    # processo a parte: dentro do pytest o caplog fica na raiz e o lastResort nunca dispararia
+    roteiro = """
+import sqlite3
+from limencore.agente import Quarto, Recepcao
+from limencore.fio import EstadoFio
+from limencore.storage import Armazenamento
+
+a = Armazenamento(":memory:")
+(fio,) = Recepcao(a).receber("o prazo do relatorio").fios
+fio = a.atualizar_estado(fio, EstadoFio.ESCOLHIDO)
+
+def falha(*args):
+    raise sqlite3.OperationalError("database is locked")
+
+a.janela = falha
+assert Quarto(a).escrever(fio, "falta a parte dos numeros").resposta.destacar_pouso is True
+"""
+    fonte = str(Path(__file__).resolve().parents[1] / "src")
+    subprocess.run([sys.executable, "-c", roteiro], check=True, env={**os.environ, "PYTHONPATH": fonte})
+    assert capfd.readouterr().err == ""
