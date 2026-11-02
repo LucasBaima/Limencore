@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 
 from limencore.corte import Trecho, recortar
 from limencore.fio import Fio
-from limencore.janela import JanelaDoFio
+from limencore.janela import Evento, JanelaDoFio
 from limencore.nota import Nota
 from limencore.storage import Armazenamento
 
@@ -166,18 +166,29 @@ class Quarto:
         return self._gravar(fio, texto)
 
     def _gravar(self, fio: Fio, texto: str) -> Escrito:
+        # antes do commit da nota (dentro de escrever): recusa e falha sobem
         nota = self._armazenamento.escrever(fio, texto)
-        janela = self._armazenamento.janela(fio.id)
         try:
-            resposta = self._agente.responder(janela)
+            resposta = self._responder(fio)
         except Exception:
-            # a nota ja foi gravada: falha do agente cai na sombra silenciosa
-            resposta = AgenteSilencioso().responder(janela)
+            # a nota ja foi gravada: qualquer falha daqui pra frente cai na sombra silenciosa
+            resposta = self._sombra(fio, nota)
+        return Escrito(nota=nota, resposta=resposta)
+
+    def _responder(self, fio: Fio) -> RespostaDoQuarto:
+        janela = self._armazenamento.janela(fio.id)
+        resposta = self._agente.responder(janela)
         if resposta.texto is not None and (not resposta.texto.strip() or _repete_o_fio(janela, resposta.texto)):
             resposta = RespostaDoQuarto(texto=None, destacar_pouso=resposta.destacar_pouso)
         if resposta.texto is not None:
             self._armazenamento.registrar_turno(fio, resposta.texto)
-        return Escrito(nota=nota, resposta=resposta)
+        return resposta
+
+    def _sombra(self, fio: Fio, nota: Nota) -> RespostaDoQuarto:
+        # nao depende do banco, que pode ser o que falhou: a sombra so olha se ha nota do usuario
+        evento = Evento("usuario", nota.texto, nota.instante)
+        janela = JanelaDoFio(conteudo_do_despejo="", trechos=(), eventos=(evento,), fio_id=fio.id)
+        return AgenteSilencioso().responder(janela)
 
     def _encaminhar(
         self,
