@@ -266,11 +266,16 @@ class DetectorPorExpressoes:
         return Passagem.SEGUIR
 
 
-ORIGENS_DA_CONFERENCIA = ("escrever", "pousar")
+ORIGENS_DA_CONFERENCIA = ("escrever", "pousar")  # so as do quarto: e a checagem que ele usa
+ORIGEM_AVALIAR = "avaliar"  # veio de Recepcao.passar_pelo_portao: nunca grava
+_ORIGENS_VALIDAS = (*ORIGENS_DA_CONFERENCIA, ORIGEM_AVALIAR)
 
 
 @dataclass(frozen=True)
 class Encaminhamento:  # a saida do sistema: nada foi salvo
+    """oferece_retorno diz se a interface oferece um caminho de volta pra onde a pessoa estava.
+    Com origem 'avaliar', a biblioteca não grava nada: voltar recusa, e gravar (se fizer sentido) é com quem chamou."""
+
     texto: str
     instante: datetime
     oferece_retorno: bool  # False = sem o "nao era isso"
@@ -279,21 +284,21 @@ class Encaminhamento:  # a saida do sistema: nada foi salvo
     outras_familias: tuple[Familia, ...] = ()  # as que tambem dispararam
 
     def __post_init__(self):
-        if self.origem is not None and self.origem not in ORIGENS_DA_CONFERENCIA:
-            raise ValueError(f"origem invalida: esperado um de {ORIGENS_DA_CONFERENCIA}, veio {self.origem!r}")
+        if self.origem is not None and self.origem not in _ORIGENS_VALIDAS:
+            raise ValueError(f"origem invalida: esperado um de {_ORIGENS_VALIDAS}, veio {self.origem!r}")
 
 
 @dataclass(frozen=True)
 class Conferencia:  # a pergunta antes da porta: nada foi salvo
     texto: str
     instante: datetime
-    origem: str | None = None  # no quarto: "escrever" ou "pousar"; None = entrada
+    origem: str | None = None  # no quarto: "escrever" ou "pousar"; "avaliar" = so avaliou; None = entrada
     familia: Familia = Familia.SI_MESMA
     outras_familias: tuple[Familia, ...] = ()  # as que tambem dispararam
 
     def __post_init__(self):
-        if self.origem is not None and self.origem not in ORIGENS_DA_CONFERENCIA:
-            raise ValueError(f"origem invalida: esperado um de {ORIGENS_DA_CONFERENCIA}, veio {self.origem!r}")
+        if self.origem is not None and self.origem not in _ORIGENS_VALIDAS:
+            raise ValueError(f"origem invalida: esperado um de {_ORIGENS_VALIDAS}, veio {self.origem!r}")
 
 
 class RegistroDaSessao:

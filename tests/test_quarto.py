@@ -410,3 +410,42 @@ assert Quarto(a).escrever(fio, "falta a parte dos numeros").resposta.destacar_po
     fonte = str(Path(__file__).resolve().parents[1] / "src")
     subprocess.run([sys.executable, "-c", roteiro], check=True, env={**os.environ, "PYTHONPATH": fonte})
     assert capfd.readouterr().err == ""
+
+
+# --- origem "avaliar": o quarto nao aceita ---
+
+
+@pytest.mark.parametrize("acontecendo_agora", [True, False])
+def test_quarto_confirmar_recusa_origem_avaliar(armazenamento, fio, acontecendo_agora):
+    sessao = RegistroDaSessao()
+    agente = AgenteQueFala()
+    instante = datetime.now(timezone.utc)
+    conferencia = Conferencia(texto=NOTA_AMBIGUA, instante=instante, origem="avaliar")
+    with pytest.raises(ValueError):
+        Quarto(armazenamento, sessao=sessao, agente=agente).confirmar(fio, conferencia, acontecendo_agora)
+    assert armazenamento.notas(fio.id) == []
+    assert agente.chamadas == 0
+    assert sessao.houve_recente(instante) is False
+
+
+@pytest.mark.parametrize("familia", [Familia.ALGUEM_EM_RISCO, Familia.SI_MESMA])
+def test_quarto_voltar_recusa_origem_avaliar(armazenamento, fio, familia):
+    agente = AgenteQueFala()
+    encaminhamento = Encaminhamento(
+        texto=NOTA_COMUM, instante=datetime.now(timezone.utc), oferece_retorno=True,
+        familia=familia, origem="avaliar",
+    )
+    with pytest.raises(ValueError):
+        Quarto(armazenamento, agente=agente).voltar(fio, encaminhamento)
+    assert armazenamento.notas(fio.id) == []
+    assert agente.chamadas == 0
+
+
+def test_quarto_recusa_o_que_veio_da_porta_da_recepcao(armazenamento, fio):
+    recepcao = Recepcao(armazenamento)
+    quarto = Quarto(armazenamento)
+    with pytest.raises(ValueError):
+        quarto.confirmar(fio, recepcao.passar_pelo_portao("nao aguento mais esse relatorio"), False)
+    with pytest.raises(ValueError):
+        quarto.voltar(fio, recepcao.passar_pelo_portao("ela disse que quer morrer"))
+    assert armazenamento.notas(fio.id) == []

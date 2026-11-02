@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from limencore.agente.encaminhamento import Conferencia, Encaminhamento, Passagem, RegistroDaSessao
+from limencore.agente.encaminhamento import Conferencia, Encaminhamento, Familia, Passagem, RegistroDaSessao
 from limencore.agente.movimento import Forma, Movimento
 from limencore.agente.recepcao import Recebido, Recepcao
 from limencore.corte import Corte, FioPlanejado, Trecho, recortar
@@ -238,3 +238,160 @@ def test_seletor_sem_corte_continua_um_fio_inteiro(armazenamento):
     (fio,) = recebido.fios
     assert fio.trechos == ()
     assert armazenamento.buscar_fios(recebido.despejo.id)[0].trechos == ()
+
+
+# --- passar_pelo_portao: as regras do receber, sem gravar nada ---
+
+AS_10 = datetime(2026, 1, 2, 10, 0, tzinfo=timezone.utc)
+AS_10_10 = datetime(2026, 1, 2, 10, 10, tzinfo=timezone.utc)
+NEUTRO = "o prazo do relatorio"
+AMBIGUO = "quero sumir"
+SI_MESMA = "quero me matar"
+RISCO_ALHEIO = "ela disse que quer morrer"
+
+
+def test_porta_texto_que_segue_devolve_none(armazenamento):
+    espiao = SeletorEspiao()
+    assert Recepcao(armazenamento, espiao).passar_pelo_portao(NEUTRO) is None
+    assert espiao.recebidos == []
+    _nada_salvo(armazenamento)
+
+
+def test_porta_texto_ambiguo_confere(armazenamento):
+    resultado = Recepcao(armazenamento).passar_pelo_portao(AMBIGUO, instante=AS_10)
+    assert resultado == Conferencia(texto=AMBIGUO, instante=AS_10, origem="avaliar")
+    _nada_salvo(armazenamento)
+
+
+@pytest.mark.parametrize(
+    "texto,familia", [(SI_MESMA, Familia.SI_MESMA), (RISCO_ALHEIO, Familia.ALGUEM_EM_RISCO)]
+)
+def test_porta_encaminha_com_a_familia_certa(armazenamento, texto, familia):
+    resultado = Recepcao(armazenamento).passar_pelo_portao(texto, instante=AS_10)
+    assert isinstance(resultado, Encaminhamento)
+    assert resultado.origem == "avaliar"
+    assert resultado.familia is familia
+    assert resultado.oferece_retorno is True
+    assert (resultado.texto, resultado.instante) == (texto, AS_10)
+    _nada_salvo(armazenamento)
+
+
+def test_porta_detector_que_falha_encaminha(armazenamento):
+    resultado = Recepcao(armazenamento, detector=DetectorQueFalha()).passar_pelo_portao(NEUTRO)
+    assert isinstance(resultado, Encaminhamento)
+    assert resultado.origem == "avaliar"
+    _nada_salvo(armazenamento)
+
+
+def test_porta_recusa_texto_vazio_como_o_receber(armazenamento):
+    with pytest.raises(ValueError):
+        Recepcao(armazenamento).passar_pelo_portao("   ")
+    _nada_salvo(armazenamento)
+
+
+def test_porta_sem_instante_usa_o_agora_com_timezone(armazenamento):
+    resultado = Recepcao(armazenamento).passar_pelo_portao(AMBIGUO)
+    assert resultado.instante.tzinfo is not None
+
+
+def test_encaminhamento_pela_porta_marca_a_sessao_do_receber(armazenamento):
+    recepcao = Recepcao(armazenamento)
+    assert recepcao.passar_pelo_portao(SI_MESMA, instante=AS_10).oferece_retorno is True
+    resultado = recepcao.receber(AMBIGUO, instante=AS_10_10)
+    assert isinstance(resultado, Encaminhamento)
+    assert resultado.oferece_retorno is False
+    assert resultado.origem is None
+    _nada_salvo(armazenamento)
+
+
+def test_encaminhamento_pelo_receber_marca_a_sessao_da_porta(armazenamento):
+    recepcao = Recepcao(armazenamento)
+    recepcao.receber(SI_MESMA, instante=AS_10)
+    resultado = recepcao.passar_pelo_portao(AMBIGUO, instante=AS_10_10)
+    assert isinstance(resultado, Encaminhamento)
+    assert resultado.oferece_retorno is False
+    assert resultado.origem == "avaliar"
+    _nada_salvo(armazenamento)
+
+
+def test_risco_de_terceiro_pela_porta_nao_marca_a_sessao(armazenamento):
+    sessao = RegistroDaSessao()
+    recepcao = Recepcao(armazenamento, sessao=sessao)
+    recepcao.passar_pelo_portao(RISCO_ALHEIO, instante=AS_10)
+    assert sessao.houve_recente(AS_10_10) is False
+    assert isinstance(recepcao.receber(AMBIGUO, instante=AS_10_10), Conferencia)
+
+
+def test_sessao_marcada_nao_afeta_texto_neutro_na_porta(armazenamento):
+    recepcao = Recepcao(armazenamento)
+    recepcao.passar_pelo_portao(SI_MESMA, instante=AS_10)
+    assert recepcao.passar_pelo_portao(NEUTRO, instante=AS_10_10) is None
+
+
+# --- origem "avaliar": incapaz de gravar ---
+
+
+def test_confirmar_avaliar_falso_devolve_none_sem_gravar(armazenamento):
+    espiao = SeletorEspiao()
+    sessao = RegistroDaSessao()
+    recepcao = Recepcao(armazenamento, espiao, sessao=sessao)
+    conferencia = recepcao.passar_pelo_portao(AMBIGUO, instante=AS_10)
+    assert recepcao.confirmar(conferencia, False) is None
+    assert espiao.recebidos == []
+    assert sessao.houve_recente(AS_10) is False
+    _nada_salvo(armazenamento)
+
+
+def test_confirmar_avaliar_verdadeiro_encaminha_e_marca_a_sessao(armazenamento):
+    sessao = RegistroDaSessao()
+    recepcao = Recepcao(armazenamento, sessao=sessao)
+    conferencia = recepcao.passar_pelo_portao(AMBIGUO, instante=AS_10)
+    resultado = recepcao.confirmar(conferencia, True)
+    assert isinstance(resultado, Encaminhamento)
+    assert resultado.origem == "avaliar"
+    assert resultado.oferece_retorno is True
+    assert sessao.houve_recente(AS_10) is True
+    _nada_salvo(armazenamento)
+
+
+def test_confirmar_avaliar_verdadeiro_com_sessao_marcada_nao_oferece_retorno(armazenamento):
+    recepcao = Recepcao(armazenamento)
+    conferencia = Conferencia(texto=AMBIGUO, instante=AS_10_10, origem="avaliar")
+    recepcao.receber(SI_MESMA, instante=AS_10)
+    resultado = recepcao.confirmar(conferencia, True)
+    assert resultado.oferece_retorno is False
+    assert resultado.origem == "avaliar"
+
+
+def test_confirmar_avaliar_de_risco_de_terceiro_nao_marca_a_sessao(armazenamento):
+    sessao = RegistroDaSessao()
+    conferencia = Conferencia(texto=AMBIGUO, instante=AS_10, origem="avaliar", familia=Familia.ALGUEM_EM_RISCO)
+    resultado = Recepcao(armazenamento, sessao=sessao).confirmar(conferencia, True)
+    assert resultado.origem == "avaliar"
+    assert sessao.houve_recente(AS_10) is False
+
+
+@pytest.mark.parametrize("familia", [Familia.ALGUEM_EM_RISCO, Familia.SI_MESMA])
+def test_voltar_avaliar_recusa_sem_gravar(armazenamento, familia):
+    encaminhamento = Encaminhamento(
+        texto=RISCO_ALHEIO, instante=AS_10, oferece_retorno=True, familia=familia, origem="avaliar"
+    )
+    with pytest.raises(ValueError):
+        Recepcao(armazenamento).voltar(encaminhamento)
+    _nada_salvo(armazenamento)
+
+
+def test_voltar_avaliar_vindo_da_porta_recusa_sem_gravar(armazenamento):
+    recepcao = Recepcao(armazenamento)
+    encaminhamento = recepcao.passar_pelo_portao(RISCO_ALHEIO)
+    with pytest.raises(ValueError):
+        recepcao.voltar(encaminhamento)
+    _nada_salvo(armazenamento)
+
+
+def test_confirmar_de_outra_origem_nao_muda(armazenamento):
+    # so "avaliar" muda o confirmar: as demais continuam gravando e encaminhando sem origem
+    recepcao = Recepcao(armazenamento)
+    conferencia = Conferencia(texto=AMBIGUO, instante=AS_10, origem="escrever")
+    assert recepcao.confirmar(conferencia, True).origem is None
+    assert isinstance(recepcao.confirmar(conferencia, False), Recebido)
