@@ -6,14 +6,17 @@ from limencore.fio import Fio
 from limencore.storage import Armazenamento
 
 from .encaminhamento import (
+    ORIGEM_AVALIAR,
     Conferencia,
     DetectorDeEncaminhamento,
     DetectorPorExpressoes,
     Encaminhamento,
+    Familia,
     Passagem,
     RegistroDaSessao,
 )
 from .movimento import Forma, Movimento
+from .quarto import avaliar_no_portao, marca_a_sessao
 from .seletor import SeletorDeMovimento, SeletorGenerico
 
 
@@ -43,30 +46,75 @@ class Recepcao:
     def receber(
         self, texto: str, instante: datetime | None = None
     ) -> Recebido | Conferencia | Encaminhamento:
-        despejo = Despejo(conteudo=texto) if instante is None else Despejo(conteudo=texto, instante=instante)
-        try:
-            passagem = self._detector.avaliar(despejo.conteudo)
-        except Exception:
-            passagem = Passagem.ENCAMINHAR  # na duvida, o lado seguro
-        if passagem is not Passagem.SEGUIR and self._sessao.houve_recente(despejo.instante):
-            return self._encaminhar(despejo.conteudo, despejo.instante, oferece_retorno=False)
-        if passagem is Passagem.ENCAMINHAR:
-            return self._encaminhar(despejo.conteudo, despejo.instante, oferece_retorno=True)
-        if passagem is Passagem.CONFERIR:
-            return Conferencia(texto=despejo.conteudo, instante=despejo.instante)
+        despejo = self._novo_despejo(texto, instante)
+        saida = self._portao(despejo)
+        if saida is not None:
+            return saida
         return self._seguir(despejo)
 
-    def confirmar(self, conferencia: Conferencia, acontecendo_agora: bool) -> Recebido | Encaminhamento:
+    def passar_pelo_portao(
+        self, texto: str, instante: datetime | None = None
+    ) -> Conferencia | Encaminhamento | None:
+        # None = segue. So avalia: o despejo fica em memoria, nada vai pro banco
+        return self._portao(self._novo_despejo(texto, instante), ORIGEM_AVALIAR)
+
+    def confirmar(self, conferencia: Conferencia, acontecendo_agora: bool) -> Recebido | Encaminhamento | None:
+        so_avaliar = conferencia.origem == ORIGEM_AVALIAR
         if acontecendo_agora:
             recente = self._sessao.houve_recente(conferencia.instante)
-            return self._encaminhar(conferencia.texto, conferencia.instante, oferece_retorno=not recente)
+            return self._encaminhar(
+                conferencia.texto, conferencia.instante, not recente,
+                conferencia.familia, conferencia.outras_familias,
+                ORIGEM_AVALIAR if so_avaliar else None,
+            )
+        if so_avaliar:
+            return None
         # a pessoa ja respondeu: nao passa pelo detector de novo
         return self._seguir(Despejo(conteudo=conferencia.texto, instante=conferencia.instante))
 
-    def _encaminhar(self, texto: str, instante: datetime, oferece_retorno: bool) -> Encaminhamento:
+    def voltar(self, encaminhamento: Encaminhamento) -> Recebido:
+        # so o risco de terceiro tem volta: o texto segue o fluxo normal, sem detector
+        if encaminhamento.familia is not Familia.ALGUEM_EM_RISCO:
+            raise ValueError(f"encaminhamento sem volta: {encaminhamento.familia!r}")
+        if encaminhamento.origem == ORIGEM_AVALIAR:
+            raise ValueError("encaminhamento de avaliacao nao grava: nao tem volta")
+        return self._seguir(Despejo(conteudo=encaminhamento.texto, instante=encaminhamento.instante))
+
+    def _novo_despejo(self, texto: str, instante: datetime | None) -> Despejo:
+        return Despejo(conteudo=texto) if instante is None else Despejo(conteudo=texto, instante=instante)
+
+    def _portao(self, despejo: Despejo, origem: str | None = None) -> Conferencia | Encaminhamento | None:
+        # avalia e marca a sessao; None = segue
+        passagem, familia, outras = avaliar_no_portao(self._detector, despejo.conteudo)
+        if passagem is not Passagem.SEGUIR and marca_a_sessao(familia) and self._sessao.houve_recente(despejo.instante):
+            return self._encaminhar(despejo.conteudo, despejo.instante, False, familia, outras, origem)
+        if passagem is Passagem.ENCAMINHAR:
+            return self._encaminhar(despejo.conteudo, despejo.instante, True, familia, outras, origem)
+        if passagem is Passagem.CONFERIR:
+            return Conferencia(
+                texto=despejo.conteudo, instante=despejo.instante, origem=origem,
+                familia=familia, outras_familias=outras,
+            )
+        return None
+
+    def _encaminhar(
+        self,
+        texto: str,
+        instante: datetime,
+        oferece_retorno: bool,
+        familia: Familia,
+        outras: tuple[Familia, ...],
+        origem: str | None = None,
+    ) -> Encaminhamento:
         # so lembra em memoria: nada vai pro banco
-        self._sessao.registrar(instante)
-        return Encaminhamento(texto=texto, instante=instante, oferece_retorno=oferece_retorno)
+        if marca_a_sessao(familia):
+            self._sessao.registrar(instante)
+        else:
+            oferece_retorno = True
+        return Encaminhamento(
+            texto=texto, instante=instante, oferece_retorno=oferece_retorno,
+            familia=familia, outras_familias=outras, origem=origem,
+        )
 
     def _seguir(self, despejo: Despejo) -> Recebido:
         try:
@@ -74,7 +122,16 @@ class Recepcao:
         except Exception:
             # fallback: nunca perder o despejo por falha do seletor
             movimento = Movimento(forma=Forma.UM_SO, alvos=(despejo.id,))
-        # caso simples: sempre um fio com o despejo inteiro, qualquer que seja a forma
-        fio = Fio(despejo_id=despejo.id)
-        self._armazenamento.salvar_despejo_com_fios(despejo, [fio])
-        return Recebido(despejo=despejo, movimento=movimento, fios=(fio,))
+        fios = self._fios_do_corte(despejo, movimento)
+        self._armazenamento.salvar_despejo_com_fios(despejo, list(fios))
+        return Recebido(despejo=despejo, movimento=movimento, fios=fios)
+
+    def _fios_do_corte(self, despejo: Despejo, movimento: Movimento) -> tuple[Fio, ...]:
+        # sem corte, ou corte que nao cabe no texto: um fio com o despejo inteiro
+        if movimento.corte is None:
+            return (Fio(despejo_id=despejo.id),)
+        try:
+            movimento.corte.validar_para(despejo.conteudo)
+        except ValueError:
+            return (Fio(despejo_id=despejo.id),)
+        return tuple(Fio(despejo_id=despejo.id, trechos=g.trechos) for g in movimento.corte.fios)

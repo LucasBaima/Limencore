@@ -16,9 +16,9 @@ def test_formas_sao_so_as_tres():
     assert {f.name for f in Forma} == {"DIVIDIR", "UM_SO", "LIGAR"}
 
 
-def test_estados_do_fio_sao_so_os_cinco():
+def test_estados_do_fio_sao_so_os_seis():
     assert {e.name for e in EstadoFio} == {
-        "JOGADO", "ESCOLHIDO", "RESOLVIDO", "GUARDADO", "DESCARTADO",
+        "JOGADO", "ESCOLHIDO", "RESOLVIDO", "GUARDADO", "DESCARTADO", "JUNTADO",
     }
 
 

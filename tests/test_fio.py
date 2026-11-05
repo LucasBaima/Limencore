@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from limencore.corte import Trecho
 from limencore.fio import EstadoFio, Fio, Transicao, TransicaoInvalida
 
 
@@ -15,22 +16,25 @@ PERMITIDAS = {
     ("ESCOLHIDO", "RESOLVIDO"),
     ("ESCOLHIDO", "GUARDADO"),
     ("ESCOLHIDO", "DESCARTADO"),
+    ("JOGADO", "JUNTADO"),
+    ("ESCOLHIDO", "JUNTADO"),
     ("GUARDADO", "ESCOLHIDO"),
     ("GUARDADO", "DESCARTADO"),
 }
 
-NOMES = ["JOGADO", "ESCOLHIDO", "RESOLVIDO", "GUARDADO", "DESCARTADO"]
+NOMES = ["JOGADO", "ESCOLHIDO", "RESOLVIDO", "GUARDADO", "DESCARTADO", "JUNTADO"]
 PARES = [(origem, destino) for origem in NOMES for destino in NOMES]
 
 
 class TestEstadoFio:
-    def test_os_cinco_e_so_eles(self):
+    def test_os_seis_e_so_eles(self):
         assert {e.name for e in EstadoFio} == {
             "JOGADO",
             "ESCOLHIDO",
             "RESOLVIDO",
             "GUARDADO",
             "DESCARTADO",
+            "JUNTADO",
         }
 
 
@@ -74,8 +78,8 @@ class TestFioInvalido:
 
 
 class TestTransicoes:
-    def test_sao_25_pares(self):
-        assert len(PARES) == 25
+    def test_sao_36_pares(self):
+        assert len(PARES) == 36
 
     @pytest.mark.parametrize("origem,destino", PARES)
     def test_transicao(self, origem, destino):
@@ -153,3 +157,17 @@ class TestTransicao:
         }
         with pytest.raises(ValueError):
             Transicao(**{**base, **campos})
+
+
+class TestTrechosNoFio:
+    def test_padrao_e_vazio(self):
+        assert Fio(despejo_id=str(uuid.uuid4())).trechos == ()
+
+    def test_aceita_trechos(self):
+        trechos = (Trecho(0, 3), Trecho(5, 9))
+        assert Fio(despejo_id=str(uuid.uuid4()), trechos=trechos).trechos == trechos
+
+    @pytest.mark.parametrize("trechos", [[Trecho(0, 3)], ((0, 3),)])
+    def test_trechos_invalidos(self, trechos):
+        with pytest.raises(ValueError):
+            Fio(despejo_id=str(uuid.uuid4()), trechos=trechos)

@@ -1,15 +1,39 @@
+from .encaminhamento import (
+    Conferencia,
+    DetectorComFamilias,
+    DetectorDeEncaminhamento,
+    DetectorPorExpressoes,
+    Encaminhamento,
+    Familia,
+    Passagem,
+    RegistroDaSessao,
+)
+
 from .movimento import Forma, Movimento
 from .pergunta import CamadaContencao, Pergunta
-from .seletor import SeletorDeMovimento, SeletorDePergunta, SeletorGenerico
+from .quarto import AgenteDoQuarto, AgenteSilencioso, Escrito, Quarto, RespostaDoQuarto
+from .recepcao import Recepcao
+from .seletor import SeletorDeMovimento, SeletorGenerico
 
-#NanoApi
-
-__all__ = [  # Diretorios externos puxam daqui
+__all__ = [  # o que quem usa o Limencore importa daqui
+    "AgenteDoQuarto",
+    "AgenteSilencioso",
     "CamadaContencao",
+    "Conferencia",
+    "DetectorComFamilias",
+    "DetectorDeEncaminhamento",
+    "DetectorPorExpressoes",
+    "Encaminhamento",
+    "Escrito",
+    "Familia",
     "Forma",
     "Movimento",
+    "Passagem",
     "Pergunta",
+    "Quarto",
+    "Recepcao",
+    "RegistroDaSessao",
+    "RespostaDoQuarto",
     "SeletorDeMovimento",
-    "SeletorDePergunta",  # alias temporario; sai quando o privado migrar
     "SeletorGenerico",
 ]

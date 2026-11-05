@@ -1,18 +1,14 @@
 from dataclasses import dataclass
-from enum import Enum
 
-#é o esqueleto das categorias do despejo
-
-class Forma(Enum):
-    DIVIDIR = "Dividir"   # vários pensamentos misturados -> separar
-    UM_SO = "Um só"       # um pensamento -> tratar direto
-    LIGAR = "Ligar"       # dois ou mais que se conectam -> juntar
+from limencore.corte import Corte
+from limencore.forma import Forma
 
 
 @dataclass(frozen=True)
 class Movimento:
     forma: Forma
     alvos: tuple[str, ...]  # ids dos Despejo que este movimento trata
+    corte: Corte | None = None  # None = o despejo inteiro
 
     def __post_init__(self):
         if not isinstance(self.forma, Forma):
@@ -22,3 +18,8 @@ class Movimento:
         for a in self.alvos:
             if not isinstance(a, str) or not a.strip():
                 raise ValueError(f"alvo invalido (id vazio ou nao-str): {a!r}")
+        if self.corte is not None:
+            if not isinstance(self.corte, Corte):
+                raise ValueError(f"corte invalido: esperado Corte, veio {self.corte!r}")
+            if self.corte.forma is not self.forma:
+                raise ValueError(f"forma {self.forma.name} diverge do corte ({self.corte.forma.name})")

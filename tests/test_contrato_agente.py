@@ -7,7 +7,6 @@ from limencore.agente import (
     Movimento,
     Pergunta,
     SeletorDeMovimento,
-    SeletorDePergunta,
     SeletorGenerico,
 )
 from limencore.despejo import Despejo
@@ -16,14 +15,35 @@ from limencore.despejo import Despejo
 class TestContratoAgente:
     def test_all_exato(self):
         assert set(limencore.agente.__all__) == {
+            "AgenteDoQuarto",
+            "AgenteSilencioso",
             "CamadaContencao",
+            "Conferencia",
+            "DetectorComFamilias",
+            "DetectorDeEncaminhamento",
+            "DetectorPorExpressoes",
+            "Encaminhamento",
+            "Escrito",
+            "Familia",
             "Forma",
             "Movimento",
+            "Passagem",
             "Pergunta",
+            "Quarto",
+            "Recepcao",
+            "RegistroDaSessao",
+            "RespostaDoQuarto",
             "SeletorDeMovimento",
-            "SeletorDePergunta",
             "SeletorGenerico",
         }
+
+    def test_quarto_pela_porta_da_frente(self):
+        from limencore.agente import AgenteDoQuarto, Quarto, RegistroDaSessao, RespostaDoQuarto
+
+        assert Quarto is limencore.agente.quarto.Quarto
+        assert AgenteDoQuarto is limencore.agente.quarto.AgenteDoQuarto
+        assert RespostaDoQuarto is limencore.agente.quarto.RespostaDoQuarto
+        assert RegistroDaSessao is limencore.agente.encaminhamento.RegistroDaSessao
 
     def test_tudo_em_all_e_importavel(self):
         for nome in limencore.agente.__all__:
@@ -32,9 +52,6 @@ class TestContratoAgente:
     def test_porta_da_frente_e_o_mesmo_objeto(self):
         assert limencore.agente.Movimento is limencore.agente.movimento.Movimento
         assert limencore.agente.Forma is limencore.agente.movimento.Forma
-
-    def test_alias_temporario_aponta_pro_novo(self):
-        assert SeletorDePergunta is SeletorDeMovimento
 
     def test_generico_via_contrato_devolve_movimento(self):
         entry = Despejo(conteudo="x")
